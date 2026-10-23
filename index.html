@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="description" content="Daily Expense Tracker – A premium personal finance app to track spending by persona." />
+  <meta name="theme-color" content="#0a0a0f" />
+  <title>Spendly – Daily Expense Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ════════════════════ SPLASH ════════════════════ -->
+<div id="splash" role="status" aria-label="Loading Spendly">
+  <div class="splash-logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+      <path d="M12 6v6l4 2"/>
+    </svg>
+  </div>
+  <div class="splash-title">Spendly</div>
+  <div class="splash-loader">
+    <div class="splash-dot"></div>
+    <div class="splash-dot"></div>
+    <div class="splash-dot"></div>
+  </div>
+</div>
+
+<!-- ════════════════════ APP ════════════════════ -->
+<div id="app">
+
+  <!-- ══ SCREEN 1: PIN LOCK ══ -->
+  <div id="pin-screen" class="screen" role="main" aria-label="PIN Lock Screen">
+    <div class="bg-mesh"></div>
+
+    <div class="pin-top">
+      <div class="pin-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="8" r="4"/>
+          <path d="M6 20v-1a6 6 0 0 1 12 0v1"/>
+          <path d="M15 13h2a2 2 0 0 1 2 2v4a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-4a2 2 0 0 1 2-2h2"/>
+        </svg>
+      </div>
+      <div class="pin-app-name">Spendly</div>
+      <div class="pin-subtitle">Enter your PIN to continue</div>
+    </div>
+
+    <div class="pin-dots-area">
+      <div class="pin-label">Enter 4-digit PIN</div>
+      <div class="pin-dots" id="pin-dots" role="group" aria-label="PIN input dots">
+        <div class="pin-dot" id="dot-0" aria-hidden="true"></div>
+        <div class="pin-dot" id="dot-1" aria-hidden="true"></div>
+        <div class="pin-dot" id="dot-2" aria-hidden="true"></div>
+        <div class="pin-dot" id="dot-3" aria-hidden="true"></div>
+      </div>
+      <div class="pin-error-msg" id="pin-error" role="alert">Incorrect PIN. Try again.</div>
+    </div>
+
+    <div class="pin-keypad">
+      <div class="keypad-grid" role="group" aria-label="Numeric keypad">
+        <!-- Row 1 -->
+        <button class="key-btn ripple-container" id="key-1" data-key="1" aria-label="1 ABC">
+          <span class="key-num">1</span>
+        </button>
+        <button class="key-btn ripple-container" id="key-2" data-key="2" aria-label="2 ABC">
+          <span class="key-num">2</span>
+          <span class="key-letters">ABC</span>
+        </button>
+        <button class="key-btn ripple-container" id="key-3" data-key="3" aria-label="3 DEF">
+          <span class="key-num">3</span>
+          <span class="key-letters">DEF</span>
+        </button>
+        <!-- Row 2 -->
+        <button class="key-btn ripple-container" id="key-4" data-key="4" aria-label="4 GHI">
+          <span class="key-num">4</span>
+          <span class="key-letters">GHI</span>
+        </button>
+        <button class="key-btn ripple-container" id="key-5" data-key="5" aria-label="5 JKL">
+          <span class="key-num">5</span>
+          <span class="key-letters">JKL</span>
+        </button>
+        <button class="key-btn ripple-container" id="key-6" data-key="6" aria-label="6 MNO">
+          <span class="key-num">6</span>
+          <span class="key-letters">MNO</span>
+        </button>
+        <!-- Row 3 -->
+        <button class="key-btn ripple-container" id="key-7" data-key="7" aria-label="7 PQRS">
+          <span class="key-num">7</span>
+          <span class="key-letters">PQRS</span>
+        </button>
+        <button class="key-btn ripple-container" id="key-8" data-key="8" aria-label="8 TUV">
+          <span class="key-num">8</span>
+          <span class="key-letters">TUV</span>
+        </button>
+        <button class="key-btn ripple-container" id="key-9" data-key="9" aria-label="9 WXYZ">
+          <span class="key-num">9</span>
+          <span class="key-letters">WXYZ</span>
+        </button>
+        <!-- Row 4 -->
+        <button class="key-btn key-empty" aria-hidden="true"></button>
+        <button class="key-btn ripple-container" id="key-0" data-key="0" aria-label="0">
+          <span class="key-num">0</span>
+        </button>
+        <button class="key-btn key-delete ripple-container" id="key-del" aria-label="Delete last digit">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"/>
+            <line x1="18" y1="9" x2="15" y2="12"/>
+            <line x1="15" y1="9" x2="18" y2="12"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ SCREEN 2: ONBOARDING ══ -->
+  <div id="onboarding-screen" class="screen" role="main" aria-label="Persona Onboarding Screen">
+    <div class="bg-mesh"></div>
+    <div class="onboarding-inner">
+      <div class="onboarding-badge">
+        <span class="dot"></span>
+        First Time Setup
+      </div>
+
+      <h1 class="onboarding-h1">
+        Who are<br>you, <span class="gradient-word">financially?</span>
+      </h1>
+
+      <p class="onboarding-desc">
+        Select your persona so we can tailor your expense categories, insights, and tips — just for you.
+      </p>
+
+      <div class="persona-label">Choose your persona</div>
+
+      <div class="persona-cards" role="radiogroup" aria-label="Persona selection">
+
+        <div class="persona-card" data-persona="Student" role="radio" aria-checked="false" tabindex="0" id="persona-student">
+          <div class="persona-icon">🎓</div>
+          <div class="persona-info">
+            <div class="persona-name">Student</div>
+            <div class="persona-hint">Track tuition, food, stationery & fun on a budget.</div>
+          </div>
+          <div class="persona-check">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </div>
+        </div>
+
+        <div class="persona-card" data-persona="Salaried" role="radio" aria-checked="false" tabindex="0" id="persona-salaried">
+          <div class="persona-icon">💼</div>
+          <div class="persona-info">
+            <div class="persona-name">Salaried</div>
+            <div class="persona-hint">Manage EMIs, groceries, bills & monthly savings.</div>
+          </div>
+          <div class="persona-check">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </div>
+        </div>
+
+        <div class="persona-card" data-persona="Business Owner" role="radio" aria-checked="false" tabindex="0" id="persona-business">
+          <div class="persona-icon">🏢</div>
+          <div class="persona-info">
+            <div class="persona-name">Business Owner</div>
+            <div class="persona-hint">Separate personal vs. business, track GST & profits.</div>
+          </div>
+          <div class="persona-check">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </div>
+        </div>
+
+      </div>
+
+      <button class="btn-cta" id="onboarding-cta" disabled aria-label="Continue to dashboard">
+        Continue →
+      </button>
+    </div>
+  </div>
+
+  <!-- ══ SCREEN 3: DASHBOARD ══ -->
+  <div id="dashboard-screen" class="screen" role="main" aria-label="Main Dashboard">
+    <div class="bg-mesh"></div>
+
+    <!-- Top Header -->
+    <header class="top-header" role="banner">
+      <div class="header-left">
+        <div class="header-greeting">Overview</div>
+        <div class="header-month" id="header-month-text">
+          June <span>2026</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="header-notif" id="notif-btn" role="button" aria-label="Notifications" tabindex="0">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+          <div class="notif-badge"></div>
+        </div>
+        <div class="header-avatar" id="avatar-btn" role="button" aria-label="Profile" tabindex="0" title="Your profile">S</div>
+      </div>
+    </header>
+
+    <!-- Scrollable Body -->
+    <div class="dashboard-body" id="dashboard-body">
+
+      <!-- Persona pill -->
+      <div class="persona-pill student" id="persona-display-pill">
+        🎓 Student
+      </div>
+
+      <!-- ── TOTAL BALANCE HERO CARD ── -->
+      <div class="balance-hero" id="balance-hero-card">
+        <div class="balance-hero-label">Total Balance</div>
+        <div class="balance-hero-amount">
+          <span class="bhero-currency">₹</span><span id="total-balance-display">0</span>
+        </div>
+        <div class="balance-hero-sub">Cash + Online Wallet combined</div>
+
+        <!-- Wallet mini cards -->
+        <div class="wallet-cards">
+          <div class="wallet-card cash">
+            <div class="wcard-top">
+              <div class="wcard-icon">💵</div>
+              <button class="wcard-add-btn" id="add-cash-btn" aria-label="Add cash balance">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+              </button>
+            </div>
+            <div class="wcard-label">Cash Wallet</div>
+            <div class="wcard-amount">₹<span id="cash-balance-display">0</span></div>
+          </div>
+
+          <div class="wallet-card online">
+            <div class="wcard-top">
+              <div class="wcard-icon">💳</div>
+              <button class="wcard-add-btn" id="add-online-btn" aria-label="Add online balance">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+              </button>
+            </div>
+            <div class="wcard-label">Online Wallet</div>
+            <div class="wcard-amount">₹<span id="online-balance-display">0</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div class="section-header">
+        <div class="section-title">Quick Actions</div>
+      </div>
+      <div class="quick-actions" role="group" aria-label="Quick actions">
+        <div class="quick-action" id="qa-add" role="button" tabindex="0" aria-label="Add expense">
+          <div class="qa-icon add">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </div>
+          <div class="qa-label">Add</div>
+        </div>
+        <div class="quick-action" id="qa-transfer" role="button" tabindex="0" aria-label="Transfer">
+          <div class="qa-icon transfer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round">
+              <path d="M7 16V4m0 0L3 8m4-4 4 4M17 8v12m0 0 4-4m-4 4-4-4"/>
+            </svg>
+          </div>
+          <div class="qa-label">Transfer</div>
+        </div>
+
+        <div class="quick-action" id="qa-more" role="button" tabindex="0" aria-label="More options">
+          <div class="qa-icon more">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>
+            </svg>
+          </div>
+          <div class="qa-label">More</div>
+        </div>
+      </div>
+
+      <!-- Tab bar: Overview / Calendar / Settings -->
+      <div class="dashboard-tab-bar" role="tablist" aria-label="Dashboard views">
+        <button class="dash-tab active" id="tab-overview" role="tab" aria-selected="true">📊 Overview</button>
+        <button class="dash-tab" id="tab-calendar" role="tab" aria-selected="false">📅 Calendar</button>
+        <button class="dash-tab" id="tab-settings" role="tab" aria-selected="false">⚙️ Settings</button>
+      </div>
+
+      <!-- OVERVIEW SECTION -->
+      <div id="overview-section">
+
+        <!-- WHO OWES ME (Khata) -->
+        <div id="khata-section" style="margin-bottom:20px;display:none;">
+          <div class="section-header">
+            <div class="section-title">🤝 Who Owes Me</div>
+            <div class="section-action" id="khata-clear-btn" role="button" tabindex="0">Clear All</div>
+          </div>
+          <div id="khata-list"></div>
+        </div>
+
+        <div class="section-header">
+          <div class="section-title">Recent Transactions</div>
+          <div class="section-action" id="view-all-btn" role="button" tabindex="0">View All</div>
+        </div>
+
+        <div class="empty-state" id="transactions-empty" role="status" aria-label="No transactions yet">
+          <div class="empty-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="5" width="20" height="14" rx="2"/>
+              <line x1="2" y1="10" x2="22" y2="10"/>
+            </svg>
+          </div>
+          <div class="empty-title">No transactions yet</div>
+          <div class="empty-subtitle">Tap the + button to log your first expense.</div>
+          <div class="empty-cta" id="add-first-btn" role="button" tabindex="0">+ Add First Expense</div>
+        </div>
+
+        <div id="txn-list"></div>
+      </div>
+
+      <!-- CALENDAR SECTION -->
+      <div id="calendar-section">
+        <div class="cal-header">
+          <button class="cal-nav-btn" id="cal-prev" aria-label="Previous month">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
+          <div class="cal-month-label" id="cal-month-label">June 2026</div>
+          <button class="cal-nav-btn" id="cal-next" aria-label="Next month">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        </div>
+
+        <!-- Day-of-week headers -->
+        <div class="cal-grid" id="cal-dow">
+          <div class="cal-day-name">S</div><div class="cal-day-name">M</div>
+          <div class="cal-day-name">T</div><div class="cal-day-name">W</div>
+          <div class="cal-day-name">T</div><div class="cal-day-name">F</div>
+          <div class="cal-day-name">S</div>
+        </div>
+
+        <!-- Calendar day grid -->
+        <div class="cal-grid" id="cal-grid" role="grid" aria-label="Expense calendar"></div>
+
+        <!-- Filter label -->
+        <div class="cal-filter-label" id="cal-filter-label" style="display:none">
+          Showing: <span id="cal-filter-date-text"></span>
+          <button class="cal-clear-btn" id="cal-clear-btn" aria-label="Clear date filter">✕ Clear</button>
+        </div>
+
+        <!-- Filtered transaction list -->
+        <div class="section-header" style="margin-top:4px">
+          <div class="section-title" id="cal-txn-title">All This Month</div>
+        </div>
+        <div class="empty-state" id="cal-txn-empty" style="display:none">
+          <div class="empty-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
+          </div>
+          <div class="empty-title">No expenses this day</div>
+          <div class="empty-subtitle">Nothing recorded for this date.</div>
+        </div>
+        <div id="cal-txn-list"></div>
+      </div>
+
+      <!-- SETTINGS SECTION -->
+      <div id="settings-section">
+        <div class="settings-group">
+          <div class="settings-group-label">Data Safety</div>
+
+          <div class="settings-row" id="btn-export">
+            <div class="settings-row-icon export">📤</div>
+            <div class="settings-row-text">
+              <div class="settings-row-title">Export Data</div>
+              <div class="settings-row-desc">Download your full database as a JSON backup file</div>
+            </div>
+            <div class="settings-row-arrow">›</div>
+          </div>
+
+          <div class="settings-row" id="btn-import">
+            <div class="settings-row-icon import">📥</div>
+            <div class="settings-row-text">
+              <div class="settings-row-title">Import Data</div>
+              <div class="settings-row-desc">Restore a previously exported JSON backup — replaces all data</div>
+            </div>
+            <div class="settings-row-arrow">›</div>
+          </div>
+
+          <!-- Hidden file input for import -->
+          <input type="file" id="import-file-input" accept=".json,application/json" style="display:none" />
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-group-label">Khata Book</div>
+          <div class="settings-row" id="btn-clear-khata-settings">
+            <div class="settings-row-icon danger">🗑️</div>
+            <div class="settings-row-text">
+              <div class="settings-row-title">Clear All Lent Records</div>
+              <div class="settings-row-desc">Remove all "Who Owes Me" entries permanently</div>
+            </div>
+            <div class="settings-row-arrow">›</div>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-group-label">Danger Zone</div>
+          <div class="settings-row" id="btn-reset-all">
+            <div class="settings-row-icon danger">⚠️</div>
+            <div class="settings-row-text">
+              <div class="settings-row-title">Reset All Data</div>
+              <div class="settings-row-desc">Wipe all transactions, balances and records. Cannot be undone.</div>
+            </div>
+            <div class="settings-row-arrow">›</div>
+          </div>
+        </div>
+
+        <div class="settings-app-info">
+          <strong>Spendly</strong><br>
+          Phase 5 · Client-side · Data stored locally<br>
+          No internet required
+        </div>
+      </div>
+
+    </div>
+
+    <!-- FAB -->
+    <button class="fab" id="expense-fab" aria-label="Add expense">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+    </button>
+
+    <!-- Bottom Nav -->
+    <nav class="bottom-nav" role="navigation" aria-label="Main navigation">
+      <div class="nav-item active" id="nav-home" role="button" tabindex="0" aria-label="Home" aria-current="page">
+        <div class="nav-icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <polyline points="9 22 9 12 15 12 15 22"/>
+          </svg>
+        </div>
+        <span class="nav-label">Home</span>
+      </div>
+
+      <div class="nav-item" id="nav-analytics" role="button" tabindex="0" aria-label="Analytics">
+        <div class="nav-icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="20" x2="18" y2="10"/>
+            <line x1="12" y1="20" x2="12" y2="4"/>
+            <line x1="6" y1="20" x2="6" y2="14"/>
+          </svg>
+        </div>
+        <span class="nav-label">Analytics</span>
+      </div>
+
+      <div class="nav-fab" id="nav-add" role="button" tabindex="0" aria-label="Add transaction">
+        <div class="nav-fab-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+        </div>
+        <span class="nav-fab-label">Add</span>
+      </div>
+
+      <div class="nav-item" id="nav-budget" role="button" tabindex="0" aria-label="Budget">
+        <div class="nav-icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2"/>
+            <path d="M8 21h8M12 17v4"/>
+          </svg>
+        </div>
+        <span class="nav-label">Budget</span>
+      </div>
+
+      <div class="nav-item" id="nav-profile" role="button" tabindex="0" aria-label="Profile">
+        <div class="nav-icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        </div>
+        <span class="nav-label">Profile</span>
+      </div>
+    </nav>
+  </div>
+
+</div><!-- /#app -->
+
+<!-- ════════════════════ EXPENSE MODAL ════════════════════ -->
+<div class="modal-overlay" id="expense-modal" role="dialog" aria-modal="true" aria-label="Add Expense">
+  <div class="bottom-sheet">
+    <div class="sheet-handle"></div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;">
+      <div>
+        <div class="sheet-title">New Expense</div>
+        <div class="sheet-subtitle" style="margin-bottom:0">Record a payment from your wallet</div>
+      </div>
+      <div style="font-size:28px">💸</div>
+    </div>
+
+    <!-- Amount -->
+    <div class="form-field">
+      <div class="field-label">
+        Amount
+        <span class="suggestion-pill" id="suggestion-pill">✦ Auto-filled</span>
+      </div>
+      <div class="sheet-input-wrap" style="margin-bottom:0">
+        <span class="sheet-currency-prefix">₹</span>
+        <input type="number" id="exp-amount" class="form-input exp-amount-input"
+          placeholder="0" min="1" step="1" inputmode="decimal" autocomplete="off"
+          aria-label="Expense amount" />
+      </div>
+      <div class="balance-warning" id="balance-warning">⚠ Insufficient balance in selected wallet</div>
+    </div>
+
+    <!-- Category -->
+    <div class="form-field">
+      <div class="field-label">Category</div>
+      <select id="exp-category" class="form-input" aria-label="Expense category">
+        <option value="" disabled selected>Select a category…</option>
+        <option value="Rent">🏠 Rent</option>
+        <option value="Mess">🍱 Mess</option>
+        <option value="Router">📡 Router</option>
+        <option value="Gym">💪 Gym</option>
+        <option value="Stationery">📝 Stationery</option>
+        <option value="Sunday Dinner">🍽️ Sunday Dinner</option>
+        <option value="Groceries">🛒 Groceries</option>
+        <option value="Transport">🚌 Transport</option>
+        <option value="Entertainment">🎬 Entertainment</option>
+        <option value="Custom">✏️ Custom</option>
+      </select>
+    </div>
+
+    <!-- Notes -->
+    <div class="form-field">
+      <div class="field-label">Notes / Reason</div>
+      <input type="text" id="exp-notes" class="form-input"
+        placeholder="e.g. Paid June rent…" maxlength="80"
+        aria-label="Notes or reason" />
+    </div>
+
+    <!-- Wallet toggle -->
+    <div class="form-field">
+      <div class="field-label">Paid From</div>
+      <div class="wallet-toggle" role="group" aria-label="Wallet selection">
+        <button class="wallet-toggle-btn active-cash" id="toggle-cash" aria-pressed="true">
+          💵 Cash
+        </button>
+        <button class="wallet-toggle-btn" id="toggle-online" aria-pressed="false">
+          💳 Online / UPI
+        </button>
+      </div>
+    </div>
+
+    <!-- Khata Toggle: Paid for Friend -->
+    <div class="form-field">
+      <label class="khata-toggle-row">
+        <div class="split-toggle-left">
+          <div class="split-icon">🤝</div>
+          <div>
+            <div class="khata-title">Paid for Friend (Lent Money)</div>
+            <div class="khata-hint">Deducts from wallet but tracks as money owed to you</div>
+          </div>
+        </div>
+        <div class="toggle-switch">
+          <input type="checkbox" id="exp-khata" aria-label="Paid for friend" />
+          <span class="toggle-thumb"></span>
+        </div>
+      </label>
+      <div class="khata-friend-field" id="khata-friend-field">
+        <input type="text" id="exp-friend-name" class="form-input"
+          placeholder="Friend's name…" maxlength="40"
+          aria-label="Friend's name" style="margin-top:8px" />
+      </div>
+    </div>
+
+    <!-- Split Toggle -->
+    <div class="form-field">
+      <label class="split-toggle-row" id="split-label">
+        <div class="split-toggle-left">
+          <div class="split-icon">✂️</div>
+          <div>
+            <div class="split-title">Split into next month</div>
+            <div class="split-hint">Pay 50% now, 50% deferred to 1st of next month</div>
+          </div>
+        </div>
+        <div class="toggle-switch">
+          <input type="checkbox" id="exp-split" aria-label="Split payment into next month" />
+          <span class="toggle-thumb"></span>
+        </div>
+      </label>
+      <div class="split-info-panel" id="split-info-panel">
+        <div class="split-info-row">
+          <span>💸 Pay now</span>
+          <span id="split-now-amt">—</span>
+        </div>
+        <div class="split-info-row">
+          <span>📅 Deferred to 1st</span>
+          <span id="split-later-amt">—</span>
+        </div>
+      </div>
+    </div>
+
+    <button class="exp-save-btn" id="exp-save-btn" aria-label="Save expense">
+      Save Expense
+    </button>
+  </div>
+</div>
+
+<!-- ════════════════════ ADD BALANCE MODAL ════════════════════ -->
+<div class="modal-overlay" id="add-balance-modal" role="dialog" aria-modal="true" aria-label="Add Balance">
+  <div class="bottom-sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title" id="sheet-title">Add Cash</div>
+    <div class="sheet-subtitle" id="sheet-subtitle">Enter amount to add to your Cash Wallet</div>
+
+    <div class="sheet-input-wrap">
+      <span class="sheet-currency-prefix">₹</span>
+      <input
+        type="number"
+        id="balance-amount-input"
+        class="sheet-input"
+        placeholder="0"
+        min="1"
+        step="1"
+        inputmode="decimal"
+        aria-label="Amount to add"
+      />
+    </div>
+
+    <div class="sheet-quick-amounts" id="quick-amounts" role="group" aria-label="Quick amount presets">
+      <div class="quick-amt" data-amount="500">+₹500</div>
+      <div class="quick-amt" data-amount="1000">+₹1K</div>
+      <div class="quick-amt" data-amount="2000">+₹2K</div>
+      <div class="quick-amt" data-amount="5000">+₹5K</div>
+    </div>
+
+    <button class="sheet-confirm-btn cash-confirm" id="sheet-confirm-btn" disabled aria-label="Confirm add balance">
+      Add to Wallet
+    </button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="app-toast" role="status" aria-live="polite"></div>
+
+<script src="app.js" defer></script>
+</body>
+</html>
