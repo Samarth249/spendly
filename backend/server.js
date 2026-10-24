@@ -1,5 +1,4 @@
 const express = require('express');
-const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
@@ -12,7 +11,69 @@ const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV === 'producti
 if (!JWT_SECRET) throw new Error('JWT_SECRET must be configured before starting Spendly in production.');
 if (Buffer.byteLength(JWT_SECRET, 'utf8') < 32) throw new Error('JWT_SECRET must contain at least 32 bytes.');
 
-app.use(cors());
+function configuredInteger(name, fallback, min, max) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  if (!/^\d+$/.test(raw)) throw new Error(`${name} must be an integer.`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be between ${min} and ${max}.`);
+  }
+  return value;
+}
+
+const BCRYPT_ROUNDS = configuredInteger('BCRYPT_ROUNDS', 12, 10, 14);
+const AUTH_TOKEN_TTL_SECONDS = configuredInteger('AUTH_TOKEN_TTL_SECONDS', 24 * 60 * 60, 5 * 60, 30 * 24 * 60 * 60);
+const AUTH_RATE_LIMIT_WINDOW_MS = configuredInteger('AUTH_RATE_LIMIT_WINDOW_SECONDS', 15 * 60, 60, 60 * 60) * 1000;
+const AUTH_RATE_LIMIT_MAX_ATTEMPTS = configuredInteger('AUTH_RATE_LIMIT_MAX_ATTEMPTS', 10, 3, 50);
+const JWT_ISSUER = 'spendly';
+const JWT_AUDIENCE = 'spendly-web';
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync(crypto.randomBytes(32).toString('base64url'), BCRYPT_ROUNDS);
+
+function configuredCorsOrigins() {
+  const origins = new Set();
+  const configured = (process.env.CORS_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean);
+  for (const origin of configured) {
+    let parsed;
+    try { parsed = new URL(origin); } catch { throw new Error('CORS_ORIGINS contains an invalid origin.'); }
+    if (parsed.origin !== origin || !['http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error('CORS_ORIGINS entries must be HTTP(S) origins without a path.');
+    }
+    origins.add(origin);
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5000', 'http://127.0.0.1:5000',
+      'http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:8765', 'http://127.0.0.1:8765']
+      .forEach(origin => origins.add(origin));
+  }
+  return origins;
+}
+
+const corsOrigins = configuredCorsOrigins();
+
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+    'Permissions-Policy': 'camera=(), geolocation=(), microphone=()',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Content-Security-Policy': "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' http://localhost:5000 http://127.0.0.1:5000"
+  });
+  const origin = req.get('origin');
+  if (origin && corsOrigins.has(origin)) {
+    res.set('Access-Control-Allow-Origin', origin);
+    res.vary('Origin');
+    res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.set('Access-Control-Max-Age', '600');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+  } else if (origin && req.method === 'OPTIONS') {
+    return res.sendStatus(403);
+  }
+  next();
+});
 app.use(express.json({ limit: '1mb', strict: true }));
 app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
@@ -115,15 +176,87 @@ function endpoint(handler, fallback) {
   };
 }
 
+function sessionId() { return crypto.randomBytes(32).toString('base64url'); }
+function sessionExpiry() { return Date.now() + AUTH_TOKEN_TTL_SECONDS * 1000; }
+function issueToken(userId, currentSessionId) {
+  return jwt.sign({ sub: String(userId), sid: currentSessionId }, JWT_SECRET, {
+    algorithm: 'HS256',
+    audience: JWT_AUDIENCE,
+    issuer: JWT_ISSUER,
+    expiresIn: AUTH_TOKEN_TTL_SECONDS
+  });
+}
+async function createSession(userId) {
+  const currentSessionId = sessionId();
+  const expiresAt = sessionExpiry();
+  await db.transaction(async tx => {
+    await tx.run('DELETE FROM auth_sessions WHERE user_id = ? AND expires_at <= ?', [userId, Date.now()]);
+    await tx.run('INSERT INTO auth_sessions (user_id, session_id, expires_at) VALUES (?, ?, ?)', [userId, currentSessionId, expiresAt]);
+  });
+  return { token: issueToken(userId, currentSessionId), sessionId: currentSessionId };
+}
+
+const authRateLimitEntries = new Map();
+function authRateLimitKeys(req, scope) {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const suppliedEmail = isObject(req.body) && typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  return [
+    { key: `${scope}:ip:${ip}`, max: AUTH_RATE_LIMIT_MAX_ATTEMPTS * 4 },
+    { key: `${scope}:ip-email:${ip}:${suppliedEmail || '-'}`, max: AUTH_RATE_LIMIT_MAX_ATTEMPTS }
+  ];
+}
+function pruneRateLimitEntries(now) {
+  for (const [key, entry] of authRateLimitEntries) {
+    entry.attempts = entry.attempts.filter(timestamp => now - timestamp < AUTH_RATE_LIMIT_WINDOW_MS);
+    if (!entry.attempts.length && entry.blockedUntil <= now) authRateLimitEntries.delete(key);
+  }
+  while (authRateLimitEntries.size > 5000) authRateLimitEntries.delete(authRateLimitEntries.keys().next().value);
+}
+function authRateLimit(scope) {
+  return (req, res, next) => {
+    const now = Date.now();
+    pruneRateLimitEntries(now);
+    const keys = authRateLimitKeys(req, scope);
+    for (const item of keys) {
+      const entry = authRateLimitEntries.get(item.key);
+      if (entry && entry.blockedUntil > now) {
+        const retrySeconds = Math.max(1, Math.ceil((entry.blockedUntil - now) / 1000));
+        res.set('Retry-After', String(retrySeconds));
+        return res.status(429).json({ success: false, error: 'Too many sign-in attempts. Please try again later.' });
+      }
+      if (entry && entry.attempts.length >= item.max) {
+        entry.blockedUntil = now + AUTH_RATE_LIMIT_WINDOW_MS;
+        authRateLimitEntries.set(item.key, entry);
+        res.set('Retry-After', String(Math.ceil(AUTH_RATE_LIMIT_WINDOW_MS / 1000)));
+        return res.status(429).json({ success: false, error: 'Too many sign-in attempts. Please try again later.' });
+      }
+    }
+    keys.forEach(item => {
+      const entry = authRateLimitEntries.get(item.key) || { attempts: [], blockedUntil: 0 };
+      entry.attempts.push(now);
+      authRateLimitEntries.set(item.key, entry);
+    });
+    req.authRateLimitKeys = keys.map(item => item.key);
+    next();
+  };
+}
+function clearAuthRateLimit(req) {
+  (req.authRateLimitKeys || []).forEach(key => authRateLimitEntries.delete(key));
+}
+
 async function authenticateToken(req, res, next) {
   const match = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/.exec(req.get('authorization') || '');
   if (!match) return res.status(401).json({ success: false, error: 'Sign in to continue.' });
   try {
-    const claims = jwt.verify(match[1], JWT_SECRET, { algorithms: ['HS256'] });
-    const id = positiveId(claims.id, 'Account');
-    const user = await db.get('SELECT id FROM users WHERE id = ?', [id]);
-    if (!user) return res.status(401).json({ success: false, error: 'Your session is no longer valid. Please sign in again.' });
-    req.user = { id: user.id };
+    const claims = jwt.verify(match[1], JWT_SECRET, { algorithms: ['HS256'], audience: JWT_AUDIENCE, issuer: JWT_ISSUER });
+    const id = positiveId(claims.sub, 'Account');
+    if (typeof claims.sid !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(claims.sid)) throw new Error('Invalid session claim.');
+    const session = await db.get(`SELECT s.user_id FROM auth_sessions s
+      JOIN users u ON u.id = s.user_id
+      WHERE s.user_id = ? AND s.session_id = ? AND s.revoked_at IS NULL AND s.expires_at > ?`, [id, claims.sid, Date.now()]);
+    if (!session) return res.status(401).json({ success: false, error: 'Your session is no longer valid. Please sign in again.' });
+    req.user = { id: session.user_id };
+    req.authSession = { id: claims.sid };
     next();
   } catch {
     return res.status(401).json({ success: false, error: 'Your session is expired or invalid. Please sign in again.' });
@@ -151,7 +284,7 @@ function adjustmentFor(type, amountCents) { return type === 'income' ? amountCen
 function dateOrNow(value, label) { return value === undefined ? new Date().toISOString() : validDate(value, label); }
 
 // AUTH
-app.post('/api/register', endpoint(async (req, res) => {
+app.post('/api/register', authRateLimit('register'), endpoint(async (req, res) => {
   const body = requireBody(req);
   const name = cleanText(body.name, 'Name', { required: true, max: 80 });
   const email = cleanText(body.email, 'Email', { required: true, max: 254 }).toLowerCase();
@@ -159,27 +292,50 @@ app.post('/api/register', endpoint(async (req, res) => {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, 'Enter a valid email address.');
   if (typeof password !== 'string' || password.length < 8 || Buffer.byteLength(password, 'utf8') > 72) fail(400, 'Password must be at least 8 characters and no longer than 72 UTF-8 bytes.');
   const existing = await db.get('SELECT id FROM users WHERE email = ?', [email]);
-  if (existing) fail(409, 'An account with this email already exists.');
-  const passwordHash = await bcrypt.hash(password, 10);
+  if (existing) fail(409, 'Unable to create an account with these details.');
+  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+  const currentSessionId = sessionId();
+  const expiresAt = sessionExpiry();
   const user = await db.transaction(async tx => {
     const result = await tx.run('INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)', [name, email, passwordHash]);
     await tx.run('INSERT INTO wallets (user_id, name, type, balance, is_default) VALUES (?, ?, ?, ?, ?)', [result.lastID, 'Cash Wallet', 'cash', 0, 1]);
     await tx.run('INSERT INTO wallets (user_id, name, type, balance, is_default) VALUES (?, ?, ?, ?, ?)', [result.lastID, 'Online / Bank', 'online', 0, 0]);
+    await tx.run('INSERT INTO auth_sessions (user_id, session_id, expires_at) VALUES (?, ?, ?)', [result.lastID, currentSessionId, expiresAt]);
     return { id: result.lastID, name, email };
   });
-  const token = jwt.sign({ id: user.id }, JWT_SECRET, { algorithm: 'HS256', expiresIn: '7d' });
+  clearAuthRateLimit(req);
+  const token = issueToken(user.id, currentSessionId);
   res.status(201).json({ success: true, message: 'Account created successfully.', token, user });
 }, 'Unable to create your account.'));
 
-app.post('/api/login', endpoint(async (req, res) => {
+app.post('/api/login', authRateLimit('login'), endpoint(async (req, res) => {
   const body = requireBody(req);
   const email = cleanText(body.email, 'Email', { required: true, max: 254 }).toLowerCase();
-  if (typeof body.password !== 'string' || !body.password) fail(400, 'Email and password are required.');
+  if (typeof body.password !== 'string' || !body.password || Buffer.byteLength(body.password, 'utf8') > 72) {
+    fail(401, 'Invalid email or password.');
+  }
   const user = await db.get('SELECT id, name, email, password_hash FROM users WHERE email = ?', [email]);
-  if (!user || !(await bcrypt.compare(body.password, user.password_hash))) fail(401, 'Invalid email or password.');
-  const token = jwt.sign({ id: user.id }, JWT_SECRET, { algorithm: 'HS256', expiresIn: '7d' });
-  res.json({ success: true, message: 'Login successful.', token, user: { id: user.id, name: user.name, email: user.email } });
+  let passwordMatches = false;
+  try {
+    passwordMatches = await bcrypt.compare(body.password, user ? user.password_hash : DUMMY_PASSWORD_HASH);
+  } catch {
+    passwordMatches = false;
+  }
+  if (!user || !passwordMatches) fail(401, 'Invalid email or password.');
+  if (bcrypt.getRounds(user.password_hash) < BCRYPT_ROUNDS) {
+    const upgradedHash = await bcrypt.hash(body.password, BCRYPT_ROUNDS);
+    await db.run('UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?', [upgradedHash, user.id, user.password_hash]);
+  }
+  const session = await createSession(user.id);
+  clearAuthRateLimit(req);
+  res.json({ success: true, message: 'Login successful.', token: session.token, user: { id: user.id, name: user.name, email: user.email } });
 }, 'Unable to sign in.'));
+
+app.post('/api/logout', authenticateToken, endpoint(async (req, res) => {
+  await db.run('UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND session_id = ? AND revoked_at IS NULL',
+    [Date.now(), req.user.id, req.authSession.id]);
+  res.status(204).end();
+}, 'Unable to sign out.'));
 
 app.get('/api/me', authenticateToken, endpoint(async (req, res) => {
   const user = await db.get('SELECT id, name, email, created_at FROM users WHERE id = ?', [req.user.id]);
@@ -220,20 +376,47 @@ app.post('/api/transactions', authenticateToken, endpoint(async (req, res) => {
   const type = body.type === undefined ? 'expense' : validatedType(body.type);
   const amount = requirePositiveCents(body.amount);
   const category = cleanText(body.category, 'Category', { required: true, max: 80 });
-  const emoji = cleanText(body.category_emoji, 'Category icon', { max: 16, fallback: '💳' });
+  const emoji = cleanText(body.category_emoji, 'Category icon', { max: 16, fallback: '\u{1F4B3}' });
   const note = cleanText(body.note, 'Note', { max: 500 });
   const date = dateOrNow(body.transaction_date, 'Transaction date');
-  const transaction = await db.transaction(async tx => {
+  const idempotencyKey = body.idempotency_key === undefined
+    ? null
+    : cleanText(body.idempotency_key, 'Idempotency key', { required: true, max: 120 });
+  if (idempotencyKey && !/^[A-Za-z0-9:_-]{1,120}$/.test(idempotencyKey)) fail(400, 'Idempotency key has an invalid format.');
+
+  const result = await db.transaction(async tx => {
+    if (idempotencyKey) {
+      const existing = await tx.get('SELECT * FROM transactions WHERE user_id = ? AND import_key = ?', [req.user.id, idempotencyKey]);
+      if (existing) {
+        const matches = existing.wallet_id === walletId && existing.type === type &&
+          storedMoneyToCents(existing.amount) === amount && existing.category === category &&
+          (existing.category_emoji || '') === emoji && (existing.note || '') === note;
+        if (!matches) fail(409, 'This payment reference was already used for a different transaction.');
+        const transaction = await tx.get(`SELECT t.*, w.name AS wallet_name, w.type AS wallet_type FROM transactions t
+          JOIN wallets w ON w.id = t.wallet_id WHERE t.id = ? AND t.user_id = ?`, [existing.id, req.user.id]);
+        const wallet = await tx.get('SELECT * FROM wallets WHERE id = ? AND user_id = ?', [existing.wallet_id, req.user.id]);
+        return { transaction, wallet, replayed: true };
+      }
+    }
+
     const wallet = await getOwnedWallet(tx, walletId, req.user.id);
     const newBalance = storedMoneyToCents(wallet.balance) + adjustmentFor(type, amount);
     await applyWalletBalance(tx, req.user.id, walletId, newBalance);
-    const result = await tx.run(`INSERT INTO transactions
-      (user_id, wallet_id, type, amount, category, category_emoji, note, transaction_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [req.user.id, walletId, type, centsToMoney(amount), category, emoji, note, date]);
-    return tx.get(`SELECT t.*, w.name AS wallet_name, w.type AS wallet_type FROM transactions t
-      JOIN wallets w ON w.id = t.wallet_id WHERE t.id = ? AND t.user_id = ?`, [result.lastID, req.user.id]);
+    const insert = idempotencyKey
+      ? await tx.run(`INSERT INTO transactions
+          (user_id, wallet_id, type, amount, category, category_emoji, note, transaction_date, import_key)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [req.user.id, walletId, type, centsToMoney(amount), category, emoji, note, date, idempotencyKey])
+      : await tx.run(`INSERT INTO transactions
+          (user_id, wallet_id, type, amount, category, category_emoji, note, transaction_date)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [req.user.id, walletId, type, centsToMoney(amount), category, emoji, note, date]);
+    const transaction = await tx.get(`SELECT t.*, w.name AS wallet_name, w.type AS wallet_type FROM transactions t
+      JOIN wallets w ON w.id = t.wallet_id WHERE t.id = ? AND t.user_id = ?`, [insert.lastID, req.user.id]);
+    const updatedWallet = await tx.get('SELECT * FROM wallets WHERE id = ? AND user_id = ?', [walletId, req.user.id]);
+    return { transaction, wallet: updatedWallet, replayed: false };
   });
-  res.status(201).json({ success: true, transaction });
+  res.status(result.replayed ? 200 : 201).json({ success: true, transaction: result.transaction, wallet: result.wallet, replayed: result.replayed });
 }, 'Unable to record that transaction.'));
 
 app.put('/api/transactions/:id', authenticateToken, endpoint(async (req, res) => {
@@ -248,6 +431,9 @@ app.put('/api/transactions/:id', authenticateToken, endpoint(async (req, res) =>
   const transaction = await db.transaction(async tx => {
     const old = await tx.get('SELECT * FROM transactions WHERE id = ? AND user_id = ?', [txId, req.user.id]);
     if (!old) fail(404, 'Transaction not found.');
+    if (String(old.import_key || '').startsWith('deferred-settlement:') || String(old.note || '').startsWith('Spendly deferred settlement:')) {
+      fail(409, 'Settled deferred expense payments cannot be edited.');
+    }
     if (old.transfer_id) fail(400, 'Transfers are changed as a pair and cannot be edited as a single transaction.');
     const oldWallet = await getOwnedWallet(tx, old.wallet_id, req.user.id);
     const newWallet = old.wallet_id === walletId ? oldWallet : await getOwnedWallet(tx, walletId, req.user.id);
@@ -272,6 +458,9 @@ app.delete('/api/transactions/:id', authenticateToken, endpoint(async (req, res)
   const deletedTransfer = await db.transaction(async tx => {
     const record = await tx.get('SELECT * FROM transactions WHERE id = ? AND user_id = ?', [txId, req.user.id]);
     if (!record) fail(404, 'Transaction not found.');
+    if (String(record.import_key || '').startsWith('deferred-settlement:') || String(record.note || '').startsWith('Spendly deferred settlement:')) {
+      fail(409, 'Settled deferred expense payments cannot be deleted.');
+    }
     if (record.transfer_id || record.category === 'Transfer Out' || record.category === 'Transfer In') {
       let pair;
       if (record.transfer_id) {
@@ -505,17 +694,28 @@ app.post('/api/import', authenticateToken, endpoint(async (req, res) => {
   for (let index = 0; index < pending.length; index += 1) {
     const item = pending[index];
     if (!isObject(item)) fail(400, `Deferred item ${index + 1} must be an object.`);
-    const pendingFields = new Set(['id', 'dueDate', 'amount', 'category', 'notes', 'fromWallet', 'wallet']);
+    const pendingFields = new Set(['id', 'dueDate', 'amount', 'remainingAmount', 'status', 'settledAt', 'settlementWallet', 'settlementTransactionId', 'category', 'notes', 'fromWallet', 'wallet']);
     if (Object.keys(item).some(key => !pendingFields.has(key))) fail(400, `Deferred item ${index + 1} has unsupported fields.`);
     if (item.id !== undefined && typeof item.id !== 'number') fail(400, `Deferred item ${index + 1} ID must be a number.`);
     if (item.id !== undefined) positiveId(item.id, `Deferred item ${index + 1} ID`);
     if (typeof item.amount !== 'number') fail(400, `Deferred item ${index + 1} amount must be a number.`);
-    requirePositiveCents(item.amount, `Deferred item ${index + 1} amount`);
+    const amountCents = requirePositiveCents(item.amount, `Deferred item ${index + 1} amount`);
+    const status = item.status === undefined ? 'outstanding' : item.status;
+    if (status !== 'outstanding' && status !== 'settled') fail(400, `Deferred item ${index + 1} has an invalid status.`);
+    const remainingCents = item.remainingAmount === undefined
+      ? (status === 'settled' ? 0 : amountCents)
+      : moneyToCents(item.remainingAmount, `Deferred item ${index + 1} remaining amount`);
+    if (remainingCents > amountCents || (status === 'settled' && remainingCents !== 0) || (status === 'outstanding' && remainingCents === 0)) {
+      fail(400, `Deferred item ${index + 1} has inconsistent settlement amounts.`);
+    }
     cleanText(item.category, `Deferred item ${index + 1} category`, { required: true, max: 80 });
     if (item.notes !== undefined && typeof item.notes !== 'string') fail(400, `Deferred item ${index + 1} notes must be text.`);
     validDate(item.dueDate, `Deferred item ${index + 1} date`);
     const deferredWallet = item.fromWallet === undefined ? item.wallet : item.fromWallet;
     if (deferredWallet !== undefined && deferredWallet !== 'cash' && deferredWallet !== 'online') fail(400, `Deferred item ${index + 1} has an invalid wallet reference.`);
+    if (item.settlementWallet !== undefined && item.settlementWallet !== 'cash' && item.settlementWallet !== 'online') fail(400, `Deferred item ${index + 1} has an invalid settlement wallet.`);
+    if (item.settledAt !== undefined) validDate(item.settledAt, `Deferred item ${index + 1} settlement date`);
+    if (item.settlementTransactionId !== undefined) positiveId(item.settlementTransactionId, `Deferred item ${index + 1} settlement transaction`);
   }
 
   const result = await db.transaction(async tx => {
