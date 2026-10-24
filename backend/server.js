@@ -143,6 +143,21 @@ function cleanText(value, label, { required = false, max = 120, fallback = '' } 
   if (result.length > max) fail(400, `${label} must be ${max} characters or fewer.`);
   return result;
 }
+function isValidEmailAddress(email) {
+  let atIndex = -1;
+  let hasDomainDot = false;
+  for (let index = 0; index < email.length; index += 1) {
+    const character = email[index];
+    if (character.trim() === '') return false;
+    if (character === '@') {
+      if (atIndex !== -1) return false;
+      atIndex = index;
+    } else if (character === '.' && atIndex !== -1 && index > atIndex + 1 && index < email.length - 1) {
+      hasDomainDot = true;
+    }
+  }
+  return atIndex > 0 && atIndex < email.length - 1 && hasDomainDot;
+}
 function validDate(value, label = 'Date') {
   if (typeof value !== 'string' || !value.trim()) fail(400, `${label} is required.`);
   const raw = value.trim();
@@ -289,7 +304,7 @@ app.post('/api/register', authRateLimit('register'), endpoint(async (req, res) =
   const name = cleanText(body.name, 'Name', { required: true, max: 80 });
   const email = cleanText(body.email, 'Email', { required: true, max: 254 }).toLowerCase();
   const password = body.password;
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, 'Enter a valid email address.');
+  if (!isValidEmailAddress(email)) fail(400, 'Enter a valid email address.');
   if (typeof password !== 'string' || password.length < 8 || Buffer.byteLength(password, 'utf8') > 72) fail(400, 'Password must be at least 8 characters and no longer than 72 UTF-8 bytes.');
   const existing = await db.get('SELECT id FROM users WHERE email = ?', [email]);
   if (existing) fail(409, 'Unable to create an account with these details.');
