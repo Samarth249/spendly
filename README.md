@@ -266,7 +266,7 @@ Create a folder named `screenshots` in the repository and save your actual scree
 
 **Git Commit History**
 
-![Git Commit History](screenshots/git-commits.png)
+<img width="1917" height="1017" alt="Screenshot 2026-10-24 220530" src="https://github.com/user-attachments/assets/ba5ea956-9c0e-4cac-a484-77f58b3c12bb" />
 
 *Figure 11: Git commit history showing meaningful project updates.*
 
