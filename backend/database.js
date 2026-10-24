@@ -36,6 +36,17 @@ const ready = (async () => {
     password_hash TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  // Server-side session records make logout and token invalidation enforceable.
+  // This is additive: it does not alter existing users or financial records.
+  await directRun(`CREATE TABLE IF NOT EXISTS auth_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    session_id TEXT NOT NULL UNIQUE,
+    expires_at INTEGER NOT NULL CHECK (expires_at > 0),
+    revoked_at INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
   await directRun(`CREATE TABLE IF NOT EXISTS wallets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -106,6 +117,7 @@ const ready = (async () => {
   }
 
   await directRun('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)');
+  await directRun('CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_active ON auth_sessions(user_id, revoked_at, expires_at)');
   await directRun('CREATE INDEX IF NOT EXISTS idx_wallets_user ON wallets(user_id)');
   await directRun('CREATE INDEX IF NOT EXISTS idx_tx_user_date ON transactions(user_id, transaction_date DESC)');
   await directRun('CREATE INDEX IF NOT EXISTS idx_khata_user ON khata_records(user_id)');
