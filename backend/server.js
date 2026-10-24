@@ -171,9 +171,7 @@ function validDate(value, label = 'Date') {
     const [, y, m, d] = dateOnly.map(Number);
     const candidate = new Date(Date.UTC(y, m - 1, d));
     if (candidate.getUTCFullYear() !== y || candidate.getUTCMonth() !== m - 1 || candidate.getUTCDate() !== d) fail(400, `${label} is invalid.`);
-    return raw;
-  }
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(raw) || !Number.isFinite(Date.parse(raw))) {
+  } else if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(raw) || !Number.isFinite(Date.parse(raw))) {
     fail(400, `${label} must be a valid ISO date.`);
   }
   return raw;
@@ -726,31 +724,42 @@ function validateImportedIds(groups) {
 function validateTransferGroups(transactions) {
   const transferGroups = new Map();
   for (const entry of transactions) {
-    const transferCategory = entry.category === 'Transfer Out' || entry.category === 'Transfer In';
-    if (transferCategory && !entry.transferId) fail(400, 'Backup transfer records must include both sides of their transfer reference.');
-    if (!entry.transferId) continue;
-    if (!transferCategory) fail(400, 'A transfer reference can only be used by Transfer Out and Transfer In records.');
-    if (!transferGroups.has(entry.transferId)) transferGroups.set(entry.transferId, []);
-    transferGroups.get(entry.transferId).push(entry);
-  }
-  for (const pair of transferGroups.values()) {
-    const outgoing = pair.find(entry => entry.category === 'Transfer Out' && entry.type === 'expense');
-    const incoming = pair.find(entry => entry.category === 'Transfer In' && entry.type === 'income');
-    if (pair.length !== 2 || !outgoing || !incoming || outgoing.amount !== incoming.amount ||
-        outgoing.walletType === incoming.walletType || outgoing.date !== incoming.date) {
-      fail(400, 'Backup transfer records must contain matching outgoing and incoming sides.');
+    if (hasTransferReference(entry)) {
+      addTransferGroupEntry(transferGroups, entry);
     }
   }
+  transferGroups.forEach(validateImportedTransferPair);
   return transferGroups;
 }
+function isTransferCategory(entry) {
+  return entry.category === 'Transfer Out' || entry.category === 'Transfer In';
+}
+function hasTransferReference(entry) {
+  const transferCategory = isTransferCategory(entry);
+  if (transferCategory && !entry.transferId) fail(400, 'Backup transfer records must include both sides of their transfer reference.');
+  if (!entry.transferId) return false;
+  if (!transferCategory) fail(400, 'A transfer reference can only be used by Transfer Out and Transfer In records.');
+  return true;
+}
+function addTransferGroupEntry(transferGroups, entry) {
+  if (!transferGroups.has(entry.transferId)) transferGroups.set(entry.transferId, []);
+  transferGroups.get(entry.transferId).push(entry);
+}
+function validateImportedTransferPair(pair) {
+  const outgoing = pair.find(entry => entry.category === 'Transfer Out' && entry.type === 'expense');
+  const incoming = pair.find(entry => entry.category === 'Transfer In' && entry.type === 'income');
+  const matches = pair.length === 2 && outgoing && incoming && outgoing.amount === incoming.amount &&
+    outgoing.walletType !== incoming.walletType && outgoing.date === incoming.date;
+  if (!matches) fail(400, 'Backup transfer records must contain matching outgoing and incoming sides.');
+}
+
+const PENDING_FIELDS = new Set(['id', 'dueDate', 'amount', 'remainingAmount', 'status', 'settledAt', 'settlementWallet', 'settlementTransactionId', 'category', 'notes', 'fromWallet', 'wallet']);
 function validatePendingRecord(item, index) {
-  if (!isObject(item)) fail(400, `Deferred item ${index + 1} must be an object.`);
-  const pendingFields = new Set(['id', 'dueDate', 'amount', 'remainingAmount', 'status', 'settledAt', 'settlementWallet', 'settlementTransactionId', 'category', 'notes', 'fromWallet', 'wallet']);
-  if (Object.keys(item).some(key => !pendingFields.has(key))) fail(400, `Deferred item ${index + 1} has unsupported fields.`);
-  if (item.id !== undefined && typeof item.id !== 'number') fail(400, `Deferred item ${index + 1} ID must be a number.`);
-  if (item.id !== undefined) positiveId(item.id, `Deferred item ${index + 1} ID`);
-  if (typeof item.amount !== 'number') fail(400, `Deferred item ${index + 1} amount must be a number.`);
-  const amountCents = requirePositiveCents(item.amount, `Deferred item ${index + 1} amount`);
+  const amountCents = validateImportedAmount(item, index, 'Deferred item', PENDING_FIELDS);
+  validatePendingAmounts(item, index, amountCents);
+  validatePendingDetails(item, index);
+}
+function validatePendingAmounts(item, index, amountCents) {
   let status = 'outstanding';
   if (item.status !== undefined) status = item.status;
   if (status !== 'outstanding' && status !== 'settled') fail(400, `Deferred item ${index + 1} has an invalid status.`);
@@ -761,6 +770,8 @@ function validatePendingRecord(item, index) {
       (status === 'outstanding' && remainingCents === 0)) {
     fail(400, `Deferred item ${index + 1} has inconsistent settlement amounts.`);
   }
+}
+function validatePendingDetails(item, index) {
   cleanText(item.category, `Deferred item ${index + 1} category`, { required: true, max: 80 });
   if (item.notes !== undefined && typeof item.notes !== 'string') fail(400, `Deferred item ${index + 1} notes must be text.`);
   validDate(item.dueDate, `Deferred item ${index + 1} date`);
@@ -793,48 +804,50 @@ function validateImportPayload(body) {
   pending.forEach(validatePendingRecord);
   return { cashSnapshot, onlineSnapshot, transactions, khata, transferGroups };
 }
+async function mergeImportedTransfer(tx, userId, pair, walletsByType, deltas) {
+  let existingCount = 0;
+  for (const leg of pair) {
+    const importKey = importKeyForTransaction(leg);
+    const wallet = walletsByType.get(leg.walletType);
+    const matching = await findExistingImportedTransaction(tx, userId, leg, wallet.id, importKey);
+    if (matching) existingCount += 1;
+  }
+  if (existingCount === pair.length) return { importedTransactions: 0, skippedTransactions: pair.length };
+  if (existingCount > 0) fail(409, 'Only one side of this backup transfer already exists; nothing was imported.');
+  for (const leg of pair) {
+    const importKey = importKeyForTransaction(leg);
+    const wallet = walletsByType.get(leg.walletType);
+    deltas.set(wallet.id, (deltas.get(wallet.id) || 0) + adjustmentFor(leg.type, leg.amount));
+    await insertImportedTransaction(tx, userId, leg, wallet.id, importKey);
+  }
+  return { importedTransactions: pair.length, skippedTransactions: 0 };
+}
+async function mergeImportedTransaction(tx, userId, entry, walletsByType, deltas) {
+  const importKey = importKeyForTransaction(entry);
+  const wallet = walletsByType.get(entry.walletType);
+  const existing = await findExistingImportedTransaction(tx, userId, entry, wallet.id, importKey);
+  if (existing) return { importedTransactions: 0, skippedTransactions: 1 };
+  deltas.set(wallet.id, (deltas.get(wallet.id) || 0) + adjustmentFor(entry.type, entry.amount));
+  const inserted = await insertImportedTransaction(tx, userId, entry, wallet.id, importKey);
+  return { importedTransactions: inserted.changes ? 1 : 0, skippedTransactions: 0 };
+}
 async function mergeImportedTransactions(tx, userId, transactions, transferGroups, walletsByType, deltas) {
   let importedTransactions = 0;
   let skippedTransactions = 0;
   const processedTransfers = new Set();
   for (const entry of transactions) {
+    let counts;
     if (entry.transferId) {
       if (processedTransfers.has(entry.transferId)) continue;
       processedTransfers.add(entry.transferId);
-      const pair = transferGroups.get(entry.transferId);
-      let existingCount = 0;
-      for (const leg of pair) {
-        const importKey = importKeyForTransaction(leg);
-        const wallet = walletsByType.get(leg.walletType);
-        const matching = await findExistingImportedTransaction(tx, userId, leg, wallet.id, importKey);
-        if (matching) existingCount += 1;
-      }
-      if (existingCount === pair.length) {
-        skippedTransactions += pair.length;
-        continue;
-      }
-      if (existingCount > 0) fail(409, 'Only one side of this backup transfer already exists; nothing was imported.');
-      for (const leg of pair) {
-        const importKey = importKeyForTransaction(leg);
-        const wallet = walletsByType.get(leg.walletType);
-        deltas.set(wallet.id, (deltas.get(wallet.id) || 0) + adjustmentFor(leg.type, leg.amount));
-        await insertImportedTransaction(tx, userId, leg, wallet.id, importKey);
-        importedTransactions += 1;
-      }
-      continue;
+      counts = await mergeImportedTransfer(
+        tx, userId, transferGroups.get(entry.transferId), walletsByType, deltas
+      );
+    } else {
+      counts = await mergeImportedTransaction(tx, userId, entry, walletsByType, deltas);
     }
-
-    const importKey = importKeyForTransaction(entry);
-    const wallet = walletsByType.get(entry.walletType);
-    const existing = await findExistingImportedTransaction(tx, userId, entry, wallet.id, importKey);
-    if (existing) {
-      skippedTransactions += 1;
-      continue;
-    }
-    const current = deltas.get(wallet.id) || 0;
-    deltas.set(wallet.id, current + adjustmentFor(entry.type, entry.amount));
-    const inserted = await insertImportedTransaction(tx, userId, entry, wallet.id, importKey);
-    if (inserted.changes) importedTransactions += 1;
+    importedTransactions += counts.importedTransactions;
+    skippedTransactions += counts.skippedTransactions;
   }
   return { importedTransactions, skippedTransactions };
 }
