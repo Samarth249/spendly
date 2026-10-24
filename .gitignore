@@ -4,6 +4,20 @@ backend/spendly.db
 /backend/spendly.db-wal
 .DS_Store
 Thumbs.db
+
+# Local SQLite databases and sidecar files
+/backend/*.db
+/backend/*.db-*
+/backend/*.sqlite
+/backend/*.sqlite-*
+/backend/*.sqlite3
+/backend/*.sqlite3-*
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
 # Generated test coverage reports
 /backend/coverage/
 
