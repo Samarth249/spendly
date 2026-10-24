@@ -6,3 +6,6 @@ backend/spendly.db
 Thumbs.db
 # Generated test coverage reports
 /backend/coverage/
+
+# Exclude local backups that may contain sensitive data
+/backups/
