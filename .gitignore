@@ -1,0 +1,6 @@
+backend/node_modules/
+backend/spendly.db
+/backend/spendly.db-shm
+/backend/spendly.db-wal
+.DS_Store
+Thumbs.db
