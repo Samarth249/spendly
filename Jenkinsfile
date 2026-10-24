@@ -24,7 +24,7 @@ pipeline {
 
         stage('API Tests and Coverage') {
             steps {
-                bat 'backend\\node_modules\\.bin\\c8.cmd --reporter=text --reporter=lcov --reports-dir=backend/coverage node --test .\\backend\\test\\api.test.js'
+                bat 'backend\\node_modules\\.bin\\c8.cmd --all --include=backend/server.js --include=backend/database.js --include=sw.js --include=theme.js --reporter=text --reporter=lcov --reports-dir=backend/coverage node --test .\\backend\\test\\*.test.js'
             }
         }
 

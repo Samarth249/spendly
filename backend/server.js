@@ -105,7 +105,12 @@ class HttpError extends Error {
 function fail(status, message) { throw new HttpError(status, message); }
 function isObject(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function positiveId(value, label = 'ID') {
-  const id = typeof value === 'number' ? value : (typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN);
+  let id = NaN;
+  if (typeof value === 'number') {
+    id = value;
+  } else if (typeof value === 'string' && /^\d+$/.test(value)) {
+    id = Number(value);
+  }
   if (!Number.isSafeInteger(id) || id <= 0) fail(400, `${label} is invalid.`);
   return id;
 }
@@ -297,6 +302,54 @@ async function applyWalletBalance(query, userId, walletId, cents) {
 
 function adjustmentFor(type, amountCents) { return type === 'income' ? amountCents : -amountCents; }
 function dateOrNow(value, label) { return value === undefined ? new Date().toISOString() : validDate(value, label); }
+function importKeyForTransaction(entry) {
+  return crypto.createHash('sha256').update(JSON.stringify([
+    entry.walletType, entry.type, entry.amount, entry.category, entry.emoji, entry.note, entry.date
+  ])).digest('hex');
+}
+async function findExistingImportedTransaction(tx, userId, entry, walletId, importKey) {
+  return tx.get(`SELECT id FROM transactions WHERE user_id = ? AND
+    (import_key = ? OR (wallet_id = ? AND type = ? AND amount = ? AND category = ? AND COALESCE(note, '') = ? AND transaction_date = ?)) LIMIT 1`,
+  [userId, importKey, walletId, entry.type, centsToMoney(entry.amount), entry.category, entry.note, entry.date]);
+}
+async function insertImportedTransaction(tx, userId, entry, walletId, importKey) {
+  return tx.run(`INSERT INTO transactions
+    (user_id, wallet_id, type, amount, category, category_emoji, note, transaction_date, import_key, transfer_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  [userId, walletId, entry.type, centsToMoney(entry.amount), entry.category, entry.emoji, entry.note, entry.date, importKey, entry.transferId]);
+}
+async function createTransaction(tx, userId, { walletId, type, amount, category, emoji, note, date, idempotencyKey }) {
+  if (idempotencyKey) {
+    const existing = await tx.get('SELECT * FROM transactions WHERE user_id = ? AND import_key = ?', [userId, idempotencyKey]);
+    if (existing) {
+      const matches = existing.wallet_id === walletId && existing.type === type &&
+        storedMoneyToCents(existing.amount) === amount && existing.category === category &&
+        (existing.category_emoji || '') === emoji && (existing.note || '') === note;
+      if (!matches) fail(409, 'This payment reference was already used for a different transaction.');
+      const transaction = await tx.get(`SELECT t.*, w.name AS wallet_name, w.type AS wallet_type FROM transactions t
+        JOIN wallets w ON w.id = t.wallet_id WHERE t.id = ? AND t.user_id = ?`, [existing.id, userId]);
+      const wallet = await tx.get('SELECT * FROM wallets WHERE id = ? AND user_id = ?', [existing.wallet_id, userId]);
+      return { transaction, wallet, replayed: true };
+    }
+  }
+
+  const wallet = await getOwnedWallet(tx, walletId, userId);
+  const newBalance = storedMoneyToCents(wallet.balance) + adjustmentFor(type, amount);
+  await applyWalletBalance(tx, userId, walletId, newBalance);
+  const insert = idempotencyKey
+    ? await tx.run(`INSERT INTO transactions
+        (user_id, wallet_id, type, amount, category, category_emoji, note, transaction_date, import_key)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [userId, walletId, type, centsToMoney(amount), category, emoji, note, date, idempotencyKey])
+    : await tx.run(`INSERT INTO transactions
+        (user_id, wallet_id, type, amount, category, category_emoji, note, transaction_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [userId, walletId, type, centsToMoney(amount), category, emoji, note, date]);
+  const transaction = await tx.get(`SELECT t.*, w.name AS wallet_name, w.type AS wallet_type FROM transactions t
+    JOIN wallets w ON w.id = t.wallet_id WHERE t.id = ? AND t.user_id = ?`, [insert.lastID, userId]);
+  const updatedWallet = await tx.get('SELECT * FROM wallets WHERE id = ? AND user_id = ?', [walletId, userId]);
+  return { transaction, wallet: updatedWallet, replayed: false };
+}
 
 // AUTH
 app.post('/api/register', authRateLimit('register'), endpoint(async (req, res) => {
@@ -388,49 +441,22 @@ app.get('/api/transactions', authenticateToken, endpoint(async (req, res) => {
 app.post('/api/transactions', authenticateToken, endpoint(async (req, res) => {
   const body = requireBody(req);
   const walletId = userWalletId(body.wallet_id);
-  const type = body.type === undefined ? 'expense' : validatedType(body.type);
+  let type = 'expense';
+  if (body.type !== undefined) type = validatedType(body.type);
   const amount = requirePositiveCents(body.amount);
   const category = cleanText(body.category, 'Category', { required: true, max: 80 });
   const emoji = cleanText(body.category_emoji, 'Category icon', { max: 16, fallback: '\u{1F4B3}' });
   const note = cleanText(body.note, 'Note', { max: 500 });
   const date = dateOrNow(body.transaction_date, 'Transaction date');
-  const idempotencyKey = body.idempotency_key === undefined
-    ? null
-    : cleanText(body.idempotency_key, 'Idempotency key', { required: true, max: 120 });
+  let idempotencyKey = null;
+  if (body.idempotency_key !== undefined) {
+    idempotencyKey = cleanText(body.idempotency_key, 'Idempotency key', { required: true, max: 120 });
+  }
   if (idempotencyKey && !/^[A-Za-z0-9:_-]{1,120}$/.test(idempotencyKey)) fail(400, 'Idempotency key has an invalid format.');
 
-  const result = await db.transaction(async tx => {
-    if (idempotencyKey) {
-      const existing = await tx.get('SELECT * FROM transactions WHERE user_id = ? AND import_key = ?', [req.user.id, idempotencyKey]);
-      if (existing) {
-        const matches = existing.wallet_id === walletId && existing.type === type &&
-          storedMoneyToCents(existing.amount) === amount && existing.category === category &&
-          (existing.category_emoji || '') === emoji && (existing.note || '') === note;
-        if (!matches) fail(409, 'This payment reference was already used for a different transaction.');
-        const transaction = await tx.get(`SELECT t.*, w.name AS wallet_name, w.type AS wallet_type FROM transactions t
-          JOIN wallets w ON w.id = t.wallet_id WHERE t.id = ? AND t.user_id = ?`, [existing.id, req.user.id]);
-        const wallet = await tx.get('SELECT * FROM wallets WHERE id = ? AND user_id = ?', [existing.wallet_id, req.user.id]);
-        return { transaction, wallet, replayed: true };
-      }
-    }
-
-    const wallet = await getOwnedWallet(tx, walletId, req.user.id);
-    const newBalance = storedMoneyToCents(wallet.balance) + adjustmentFor(type, amount);
-    await applyWalletBalance(tx, req.user.id, walletId, newBalance);
-    const insert = idempotencyKey
-      ? await tx.run(`INSERT INTO transactions
-          (user_id, wallet_id, type, amount, category, category_emoji, note, transaction_date, import_key)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [req.user.id, walletId, type, centsToMoney(amount), category, emoji, note, date, idempotencyKey])
-      : await tx.run(`INSERT INTO transactions
-          (user_id, wallet_id, type, amount, category, category_emoji, note, transaction_date)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [req.user.id, walletId, type, centsToMoney(amount), category, emoji, note, date]);
-    const transaction = await tx.get(`SELECT t.*, w.name AS wallet_name, w.type AS wallet_type FROM transactions t
-      JOIN wallets w ON w.id = t.wallet_id WHERE t.id = ? AND t.user_id = ?`, [insert.lastID, req.user.id]);
-    const updatedWallet = await tx.get('SELECT * FROM wallets WHERE id = ? AND user_id = ?', [walletId, req.user.id]);
-    return { transaction, wallet: updatedWallet, replayed: false };
-  });
+  const result = await db.transaction(tx => createTransaction(tx, req.user.id, {
+    walletId, type, amount, category, emoji, note, date, idempotencyKey
+  }));
   res.status(result.replayed ? 200 : 201).json({ success: true, transaction: result.transaction, wallet: result.wallet, replayed: result.replayed });
 }, 'Unable to record that transaction.'));
 
@@ -446,7 +472,7 @@ app.put('/api/transactions/:id', authenticateToken, endpoint(async (req, res) =>
   const transaction = await db.transaction(async tx => {
     const old = await tx.get('SELECT * FROM transactions WHERE id = ? AND user_id = ?', [txId, req.user.id]);
     if (!old) fail(404, 'Transaction not found.');
-    if (String(old.import_key || '').startsWith('deferred-settlement:') || String(old.note || '').startsWith('Spendly deferred settlement:')) {
+    if (isDeferredSettlement(old)) {
       fail(409, 'Settled deferred expense payments cannot be edited.');
     }
     if (old.transfer_id) fail(400, 'Transfers are changed as a pair and cannot be edited as a single transaction.');
@@ -468,68 +494,86 @@ app.put('/api/transactions/:id', authenticateToken, endpoint(async (req, res) =>
   res.json({ success: true, transaction });
 }, 'Unable to update that transaction.'));
 
+function isDeferredSettlement(record) {
+  return String(record.import_key || '').startsWith('deferred-settlement:') ||
+    String(record.note || '').startsWith('Spendly deferred settlement:');
+}
+function transferMemo(note) {
+  const separator = String(note || '').indexOf(':');
+  return separator < 0 ? null : String(note || '').slice(separator + 1).trim();
+}
+async function findLegacyTransferPair(tx, record, userId) {
+  const outgoing = record.category === 'Transfer Out' && record.type === 'expense';
+  const incoming = record.category === 'Transfer In' && record.type === 'income';
+  if (!outgoing && !incoming) fail(409, 'This older transfer is incomplete and cannot be safely removed.');
+
+  const category = outgoing ? 'Transfer In' : 'Transfer Out';
+  const type = outgoing ? 'income' : 'expense';
+  const candidates = await tx.all(`SELECT * FROM transactions WHERE user_id = ? AND category = ? AND type = ? AND amount = ? AND transaction_date = ?`,
+    [userId, category, type, record.amount, record.transaction_date]);
+  const currentWallet = await getOwnedWallet(tx, record.wallet_id, userId);
+  const memo = transferMemo(record.note);
+  const matching = [];
+  for (const candidate of candidates) {
+    const otherWallet = await getOwnedWallet(tx, candidate.wallet_id, userId);
+    const otherMemo = transferMemo(candidate.note);
+    if (otherWallet.id !== currentWallet.id && otherMemo !== null && otherMemo === memo) matching.push(candidate);
+  }
+  if (matching.length !== 1) fail(409, 'This older transfer has no unique matching side and cannot be safely removed.');
+  return [record, matching[0]];
+}
+function validateTransferPair(pair) {
+  const outgoing = pair.find(leg => leg.category === 'Transfer Out' && leg.type === 'expense');
+  const incoming = pair.find(leg => leg.category === 'Transfer In' && leg.type === 'income');
+  if (pair.length !== 2 || !outgoing || !incoming || outgoing.amount !== incoming.amount ||
+      outgoing.wallet_id === incoming.wallet_id || outgoing.transaction_date !== incoming.transaction_date) {
+    fail(409, 'This transfer is incomplete and cannot be safely removed.');
+  }
+}
+async function restoreTransferBalances(tx, pair, userId) {
+  const changes = new Map();
+  for (const leg of pair) {
+    const wallet = await getOwnedWallet(tx, leg.wallet_id, userId);
+    const restore = -adjustmentFor(leg.type, storedMoneyToCents(leg.amount));
+    changes.set(wallet.id, (changes.get(wallet.id) || 0) + restore);
+  }
+  for (const [walletId, delta] of changes) {
+    const wallet = await getOwnedWallet(tx, walletId, userId);
+    await applyWalletBalance(tx, userId, walletId, storedMoneyToCents(wallet.balance) + delta);
+  }
+}
+async function deleteTransfer(tx, record, userId) {
+  let pair;
+  if (record.transfer_id) {
+    pair = await tx.all('SELECT * FROM transactions WHERE user_id = ? AND transfer_id = ?', [userId, record.transfer_id]);
+  } else {
+    pair = await findLegacyTransferPair(tx, record, userId);
+  }
+  validateTransferPair(pair);
+  await restoreTransferBalances(tx, pair, userId);
+  const result = record.transfer_id
+    ? await tx.run('DELETE FROM transactions WHERE user_id = ? AND transfer_id = ?', [userId, record.transfer_id])
+    : await tx.run('DELETE FROM transactions WHERE user_id = ? AND id IN (?, ?)', [userId, pair[0].id, pair[1].id]);
+  if (result.changes !== 2) fail(409, 'This transfer changed before it could be removed.');
+}
+async function deleteTransactionRecord(tx, txId, userId) {
+  const record = await tx.get('SELECT * FROM transactions WHERE id = ? AND user_id = ?', [txId, userId]);
+  if (!record) fail(404, 'Transaction not found.');
+  if (isDeferredSettlement(record)) fail(409, 'Settled deferred expense payments cannot be deleted.');
+  if (record.transfer_id || record.category === 'Transfer Out' || record.category === 'Transfer In') {
+    await deleteTransfer(tx, record, userId);
+    return true;
+  }
+  const wallet = await getOwnedWallet(tx, record.wallet_id, userId);
+  const restore = -adjustmentFor(record.type, storedMoneyToCents(record.amount));
+  await applyWalletBalance(tx, userId, wallet.id, storedMoneyToCents(wallet.balance) + restore);
+  await tx.run('DELETE FROM transactions WHERE id = ? AND user_id = ?', [txId, userId]);
+  return false;
+}
+
 app.delete('/api/transactions/:id', authenticateToken, endpoint(async (req, res) => {
   const txId = positiveId(req.params.id, 'Transaction');
-  const deletedTransfer = await db.transaction(async tx => {
-    const record = await tx.get('SELECT * FROM transactions WHERE id = ? AND user_id = ?', [txId, req.user.id]);
-    if (!record) fail(404, 'Transaction not found.');
-    if (String(record.import_key || '').startsWith('deferred-settlement:') || String(record.note || '').startsWith('Spendly deferred settlement:')) {
-      fail(409, 'Settled deferred expense payments cannot be deleted.');
-    }
-    if (record.transfer_id || record.category === 'Transfer Out' || record.category === 'Transfer In') {
-      let pair;
-      if (record.transfer_id) {
-        pair = await tx.all('SELECT * FROM transactions WHERE user_id = ? AND transfer_id = ?', [req.user.id, record.transfer_id]);
-      } else {
-        const outgoing = record.category === 'Transfer Out' && record.type === 'expense';
-        const incoming = record.category === 'Transfer In' && record.type === 'income';
-        if (!outgoing && !incoming) fail(409, 'This older transfer is incomplete and cannot be safely removed.');
-        const category = outgoing ? 'Transfer In' : 'Transfer Out';
-        const type = outgoing ? 'income' : 'expense';
-        const candidates = await tx.all(`SELECT * FROM transactions WHERE user_id = ? AND category = ? AND type = ? AND amount = ? AND transaction_date = ?`,
-          [req.user.id, category, type, record.amount, record.transaction_date]);
-        const currentWallet = await getOwnedWallet(tx, record.wallet_id, req.user.id);
-        const currentNote = String(record.note || '');
-        const separator = currentNote.indexOf(':');
-        const memo = separator < 0 ? null : currentNote.slice(separator + 1).trim();
-        const matching = [];
-        for (const candidate of candidates) {
-          const otherWallet = await getOwnedWallet(tx, candidate.wallet_id, req.user.id);
-          const candidateNote = String(candidate.note || '');
-          const otherSeparator = candidateNote.indexOf(':');
-          const otherMemo = otherSeparator < 0 ? null : candidateNote.slice(otherSeparator + 1).trim();
-          if (otherWallet.id !== currentWallet.id && otherMemo !== null && otherMemo === memo) matching.push(candidate);
-        }
-        if (matching.length !== 1) fail(409, 'This older transfer has no unique matching side and cannot be safely removed.');
-        pair = [record, matching[0]];
-      }
-      const outgoing = pair.find(leg => leg.category === 'Transfer Out' && leg.type === 'expense');
-      const incoming = pair.find(leg => leg.category === 'Transfer In' && leg.type === 'income');
-      if (pair.length !== 2 || !outgoing || !incoming || outgoing.amount !== incoming.amount || outgoing.wallet_id === incoming.wallet_id || outgoing.transaction_date !== incoming.transaction_date) {
-        fail(409, 'This transfer is incomplete and cannot be safely removed.');
-      }
-      const changes = new Map();
-      for (const leg of pair) {
-        const wallet = await getOwnedWallet(tx, leg.wallet_id, req.user.id);
-        const restore = -adjustmentFor(leg.type, storedMoneyToCents(leg.amount));
-        changes.set(wallet.id, (changes.get(wallet.id) || 0) + restore);
-      }
-      for (const [walletId, delta] of changes) {
-        const wallet = await getOwnedWallet(tx, walletId, req.user.id);
-        await applyWalletBalance(tx, req.user.id, walletId, storedMoneyToCents(wallet.balance) + delta);
-      }
-      const result = record.transfer_id
-        ? await tx.run('DELETE FROM transactions WHERE user_id = ? AND transfer_id = ?', [req.user.id, record.transfer_id])
-        : await tx.run('DELETE FROM transactions WHERE user_id = ? AND id IN (?, ?)', [req.user.id, pair[0].id, pair[1].id]);
-      if (result.changes !== 2) fail(409, 'This transfer changed before it could be removed.');
-      return true;
-    }
-    const wallet = await getOwnedWallet(tx, record.wallet_id, req.user.id);
-    const restore = -adjustmentFor(record.type, storedMoneyToCents(record.amount));
-    await applyWalletBalance(tx, req.user.id, wallet.id, storedMoneyToCents(wallet.balance) + restore);
-    await tx.run('DELETE FROM transactions WHERE id = ? AND user_id = ?', [txId, req.user.id]);
-    return false;
-  });
+  const deletedTransfer = await db.transaction(tx => deleteTransactionRecord(tx, txId, req.user.id));
   res.json({ success: true, message: deletedTransfer ? 'Both sides of the transfer were deleted and balances restored.' : 'Transaction deleted.' });
 }, 'Unable to delete that transaction.'));
 
@@ -627,12 +671,7 @@ app.post('/api/wallets/transfer', authenticateToken, endpoint(async (req, res) =
 // Validated, additive import. Client IDs and user IDs are never used as database ownership keys.
 const IMPORT_FIELDS = new Set(['id', 'wallet_id', 'wallet', 'type', 'amount', 'category', 'category_emoji', 'date', 'transaction_date', 'notes', 'note', 'transfer_id']);
 function validateImportedTransaction(item, index) {
-  if (!isObject(item)) fail(400, `Transaction ${index + 1} must be an object.`);
-  if (Object.keys(item).some(key => !IMPORT_FIELDS.has(key))) fail(400, `Transaction ${index + 1} has unsupported fields.`);
-  if (item.id !== undefined && typeof item.id !== 'number') fail(400, `Transaction ${index + 1} ID must be a number.`);
-  if (item.id !== undefined) positiveId(item.id, `Transaction ${index + 1} ID`);
-  if (typeof item.amount !== 'number') fail(400, `Transaction ${index + 1} amount must be a number.`);
-  const amount = requirePositiveCents(item.amount, `Transaction ${index + 1} amount`);
+  const amount = validateImportedAmount(item, index, 'Transaction', IMPORT_FIELDS);
   const category = cleanText(item.category, `Transaction ${index + 1} category`, { required: true, max: 80 });
   const type = item.type === undefined ? 'expense' : validatedType(item.type);
   const walletType = item.wallet;
@@ -647,13 +686,8 @@ function validateImportedTransaction(item, index) {
   return { item, amount, category, type, walletType, date, note, emoji, transferId };
 }
 function validateImportedKhata(item, index) {
-  if (!isObject(item)) fail(400, `Lent record ${index + 1} must be an object.`);
   const allowed = new Set(['id', 'wallet_id', 'wallet', 'friendName', 'friend_name', 'amount', 'date', 'lent_date', 'category', 'notes', 'note', 'category_emoji']);
-  if (Object.keys(item).some(key => !allowed.has(key))) fail(400, `Lent record ${index + 1} has unsupported fields.`);
-  if (item.id !== undefined && typeof item.id !== 'number') fail(400, `Lent record ${index + 1} ID must be a number.`);
-  if (item.id !== undefined) positiveId(item.id, `Lent record ${index + 1} ID`);
-  if (typeof item.amount !== 'number') fail(400, `Lent record ${index + 1} amount must be a number.`);
-  const amount = requirePositiveCents(item.amount, `Lent record ${index + 1} amount`);
+  const amount = validateImportedAmount(item, index, 'Lent record', allowed);
   const friendName = cleanText(item.friendName === undefined ? item.friend_name : item.friendName, `Lent record ${index + 1} friend name`, { required: true, max: 80 });
   const category = cleanText(item.category, `Lent record ${index + 1} category`, { required: true, max: 80 });
   const walletType = item.wallet;
@@ -665,9 +699,79 @@ function validateImportedKhata(item, index) {
   if (item.wallet_id !== undefined) positiveId(item.wallet_id, `Lent record ${index + 1} wallet`);
   return { item, amount, friendName, category, walletType, date, note, emoji };
 }
-
-app.post('/api/import', authenticateToken, endpoint(async (req, res) => {
-  const body = requireBody(req);
+function validateImportedAmount(item, index, label, allowedFields) {
+  if (!isObject(item)) fail(400, `${label} ${index + 1} must be an object.`);
+  if (Object.keys(item).some(key => !allowedFields.has(key))) fail(400, `${label} ${index + 1} has unsupported fields.`);
+  if (item.id !== undefined && typeof item.id !== 'number') fail(400, `${label} ${index + 1} ID must be a number.`);
+  if (item.id !== undefined) positiveId(item.id, `${label} ${index + 1} ID`);
+  if (typeof item.amount !== 'number') fail(400, `${label} ${index + 1} amount must be a number.`);
+  return requirePositiveCents(item.amount, `${label} ${index + 1} amount`);
+}
+function importedRecordId(entry) {
+  if (!entry || typeof entry !== 'object') return undefined;
+  if (entry.item) return entry.item.id;
+  return entry.id;
+}
+function validateImportedIds(groups) {
+  for (const [items, label] of groups) {
+    const ids = new Set();
+    items.forEach((entry, index) => {
+      const id = importedRecordId(entry);
+      if (id === undefined) return;
+      if (!Number.isSafeInteger(id) || id <= 0 || ids.has(id)) fail(400, `${label} ${index + 1} has an invalid or duplicate ID.`);
+      ids.add(id);
+    });
+  }
+}
+function validateTransferGroups(transactions) {
+  const transferGroups = new Map();
+  for (const entry of transactions) {
+    const transferCategory = entry.category === 'Transfer Out' || entry.category === 'Transfer In';
+    if (transferCategory && !entry.transferId) fail(400, 'Backup transfer records must include both sides of their transfer reference.');
+    if (!entry.transferId) continue;
+    if (!transferCategory) fail(400, 'A transfer reference can only be used by Transfer Out and Transfer In records.');
+    if (!transferGroups.has(entry.transferId)) transferGroups.set(entry.transferId, []);
+    transferGroups.get(entry.transferId).push(entry);
+  }
+  for (const pair of transferGroups.values()) {
+    const outgoing = pair.find(entry => entry.category === 'Transfer Out' && entry.type === 'expense');
+    const incoming = pair.find(entry => entry.category === 'Transfer In' && entry.type === 'income');
+    if (pair.length !== 2 || !outgoing || !incoming || outgoing.amount !== incoming.amount ||
+        outgoing.walletType === incoming.walletType || outgoing.date !== incoming.date) {
+      fail(400, 'Backup transfer records must contain matching outgoing and incoming sides.');
+    }
+  }
+  return transferGroups;
+}
+function validatePendingRecord(item, index) {
+  if (!isObject(item)) fail(400, `Deferred item ${index + 1} must be an object.`);
+  const pendingFields = new Set(['id', 'dueDate', 'amount', 'remainingAmount', 'status', 'settledAt', 'settlementWallet', 'settlementTransactionId', 'category', 'notes', 'fromWallet', 'wallet']);
+  if (Object.keys(item).some(key => !pendingFields.has(key))) fail(400, `Deferred item ${index + 1} has unsupported fields.`);
+  if (item.id !== undefined && typeof item.id !== 'number') fail(400, `Deferred item ${index + 1} ID must be a number.`);
+  if (item.id !== undefined) positiveId(item.id, `Deferred item ${index + 1} ID`);
+  if (typeof item.amount !== 'number') fail(400, `Deferred item ${index + 1} amount must be a number.`);
+  const amountCents = requirePositiveCents(item.amount, `Deferred item ${index + 1} amount`);
+  let status = 'outstanding';
+  if (item.status !== undefined) status = item.status;
+  if (status !== 'outstanding' && status !== 'settled') fail(400, `Deferred item ${index + 1} has an invalid status.`);
+  let remainingCents = amountCents;
+  if (status === 'settled') remainingCents = 0;
+  if (item.remainingAmount !== undefined) remainingCents = moneyToCents(item.remainingAmount, `Deferred item ${index + 1} remaining amount`);
+  if (remainingCents > amountCents || (status === 'settled' && remainingCents !== 0) ||
+      (status === 'outstanding' && remainingCents === 0)) {
+    fail(400, `Deferred item ${index + 1} has inconsistent settlement amounts.`);
+  }
+  cleanText(item.category, `Deferred item ${index + 1} category`, { required: true, max: 80 });
+  if (item.notes !== undefined && typeof item.notes !== 'string') fail(400, `Deferred item ${index + 1} notes must be text.`);
+  validDate(item.dueDate, `Deferred item ${index + 1} date`);
+  let deferredWallet = item.wallet;
+  if (item.fromWallet !== undefined) deferredWallet = item.fromWallet;
+  if (deferredWallet !== undefined && deferredWallet !== 'cash' && deferredWallet !== 'online') fail(400, `Deferred item ${index + 1} has an invalid wallet reference.`);
+  if (item.settlementWallet !== undefined && item.settlementWallet !== 'cash' && item.settlementWallet !== 'online') fail(400, `Deferred item ${index + 1} has an invalid settlement wallet.`);
+  if (item.settledAt !== undefined) validDate(item.settledAt, `Deferred item ${index + 1} settlement date`);
+  if (item.settlementTransactionId !== undefined) positiveId(item.settlementTransactionId, `Deferred item ${index + 1} settlement transaction`);
+}
+function validateImportPayload(body) {
   const allowedRootFields = new Set(['currentCashBalance', 'currentOnlineBalance', 'transactions', 'pendingLiabilities', 'lentRecords']);
   if (Object.keys(body).some(key => !allowedRootFields.has(key))) fail(400, 'Backup contains unsupported fields.');
   if (typeof body.currentCashBalance !== 'number' || typeof body.currentOnlineBalance !== 'number') fail(400, 'Backup wallet balances must be numbers.');
@@ -675,160 +779,126 @@ app.post('/api/import', authenticateToken, endpoint(async (req, res) => {
   const onlineSnapshot = moneyToCents(body.currentOnlineBalance, 'Online balance');
   if (!Array.isArray(body.transactions)) fail(400, 'Transactions must be an array.');
   if (body.transactions.length > 5000) fail(400, 'A backup can contain at most 5,000 transactions.');
-  const pending = body.pendingLiabilities === undefined ? [] : body.pendingLiabilities;
-  const lent = body.lentRecords === undefined ? [] : body.lentRecords;
-  if (!Array.isArray(pending) || !Array.isArray(lent) || lent.length > 1000 || pending.length > 1000) fail(400, 'Backup records must be valid arrays.');
+  let pending = [];
+  if (body.pendingLiabilities !== undefined) pending = body.pendingLiabilities;
+  let lent = [];
+  if (body.lentRecords !== undefined) lent = body.lentRecords;
+  if (!Array.isArray(pending) || !Array.isArray(lent) || lent.length > 1000 || pending.length > 1000) {
+    fail(400, 'Backup records must be valid arrays.');
+  }
   const transactions = body.transactions.map(validateImportedTransaction);
   const khata = lent.map(validateImportedKhata);
-  for (const [items, label] of [[transactions, 'Transaction'], [khata, 'Lent record'], [pending, 'Deferred item']]) {
-    const ids = new Set();
-    items.forEach((entry, index) => {
-      const id = entry && typeof entry === 'object' ? (entry.item ? entry.item.id : entry.id) : undefined;
-      if (id === undefined) return;
-      if (!Number.isSafeInteger(id) || id <= 0 || ids.has(id)) fail(400, `${label} ${index + 1} has an invalid or duplicate ID.`);
-      ids.add(id);
-    });
-  }
-  const transferGroups = new Map();
-  transactions.forEach(entry => {
-    const transferCategory = entry.category === 'Transfer Out' || entry.category === 'Transfer In';
-    if (transferCategory && !entry.transferId) fail(400, 'Backup transfer records must include both sides of their transfer reference.');
+  validateImportedIds([[transactions, 'Transaction'], [khata, 'Lent record'], [pending, 'Deferred item']]);
+  const transferGroups = validateTransferGroups(transactions);
+  pending.forEach(validatePendingRecord);
+  return { cashSnapshot, onlineSnapshot, transactions, khata, transferGroups };
+}
+async function mergeImportedTransactions(tx, userId, transactions, transferGroups, walletsByType, deltas) {
+  let importedTransactions = 0;
+  let skippedTransactions = 0;
+  const processedTransfers = new Set();
+  for (const entry of transactions) {
     if (entry.transferId) {
-      if (!transferCategory) fail(400, 'A transfer reference can only be used by Transfer Out and Transfer In records.');
-      if (!transferGroups.has(entry.transferId)) transferGroups.set(entry.transferId, []);
-      transferGroups.get(entry.transferId).push(entry);
-    }
-  });
-  for (const pair of transferGroups.values()) {
-    const outgoing = pair.find(entry => entry.category === 'Transfer Out' && entry.type === 'expense');
-    const incoming = pair.find(entry => entry.category === 'Transfer In' && entry.type === 'income');
-    if (pair.length !== 2 || !outgoing || !incoming || outgoing.amount !== incoming.amount || outgoing.walletType === incoming.walletType || outgoing.date !== incoming.date) {
-      fail(400, 'Backup transfer records must contain matching outgoing and incoming sides.');
-    }
-  }
-  for (let index = 0; index < pending.length; index += 1) {
-    const item = pending[index];
-    if (!isObject(item)) fail(400, `Deferred item ${index + 1} must be an object.`);
-    const pendingFields = new Set(['id', 'dueDate', 'amount', 'remainingAmount', 'status', 'settledAt', 'settlementWallet', 'settlementTransactionId', 'category', 'notes', 'fromWallet', 'wallet']);
-    if (Object.keys(item).some(key => !pendingFields.has(key))) fail(400, `Deferred item ${index + 1} has unsupported fields.`);
-    if (item.id !== undefined && typeof item.id !== 'number') fail(400, `Deferred item ${index + 1} ID must be a number.`);
-    if (item.id !== undefined) positiveId(item.id, `Deferred item ${index + 1} ID`);
-    if (typeof item.amount !== 'number') fail(400, `Deferred item ${index + 1} amount must be a number.`);
-    const amountCents = requirePositiveCents(item.amount, `Deferred item ${index + 1} amount`);
-    const status = item.status === undefined ? 'outstanding' : item.status;
-    if (status !== 'outstanding' && status !== 'settled') fail(400, `Deferred item ${index + 1} has an invalid status.`);
-    const remainingCents = item.remainingAmount === undefined
-      ? (status === 'settled' ? 0 : amountCents)
-      : moneyToCents(item.remainingAmount, `Deferred item ${index + 1} remaining amount`);
-    if (remainingCents > amountCents || (status === 'settled' && remainingCents !== 0) || (status === 'outstanding' && remainingCents === 0)) {
-      fail(400, `Deferred item ${index + 1} has inconsistent settlement amounts.`);
-    }
-    cleanText(item.category, `Deferred item ${index + 1} category`, { required: true, max: 80 });
-    if (item.notes !== undefined && typeof item.notes !== 'string') fail(400, `Deferred item ${index + 1} notes must be text.`);
-    validDate(item.dueDate, `Deferred item ${index + 1} date`);
-    const deferredWallet = item.fromWallet === undefined ? item.wallet : item.fromWallet;
-    if (deferredWallet !== undefined && deferredWallet !== 'cash' && deferredWallet !== 'online') fail(400, `Deferred item ${index + 1} has an invalid wallet reference.`);
-    if (item.settlementWallet !== undefined && item.settlementWallet !== 'cash' && item.settlementWallet !== 'online') fail(400, `Deferred item ${index + 1} has an invalid settlement wallet.`);
-    if (item.settledAt !== undefined) validDate(item.settledAt, `Deferred item ${index + 1} settlement date`);
-    if (item.settlementTransactionId !== undefined) positiveId(item.settlementTransactionId, `Deferred item ${index + 1} settlement transaction`);
-  }
-
-  const result = await db.transaction(async tx => {
-    const wallets = await tx.all('SELECT * FROM wallets WHERE user_id = ?', [req.user.id]);
-    const byType = new Map(wallets.map(wallet => [wallet.type, wallet]));
-    if (!byType.has('cash') || !byType.has('online')) fail(400, 'This account is missing a required wallet.');
-    const existingFinancialRows = await tx.get(`SELECT
-      (SELECT COUNT(*) FROM transactions WHERE user_id = ?) +
-      (SELECT COUNT(*) FROM khata_records WHERE user_id = ?) AS count`, [req.user.id, req.user.id]);
-    const restoreSnapshot = existingFinancialRows.count === 0 && wallets.every(wallet => storedMoneyToCents(wallet.balance) === 0);
-    for (const entry of [...transactions, ...khata]) {
-      if (entry.item.wallet_id !== undefined) {
-        const referenced = wallets.find(wallet => wallet.id === Number(entry.item.wallet_id));
-        if (!referenced || referenced.type !== entry.walletType) fail(400, 'Backup contains a wallet reference that does not belong to this account.');
+      if (processedTransfers.has(entry.transferId)) continue;
+      processedTransfers.add(entry.transferId);
+      const pair = transferGroups.get(entry.transferId);
+      let existingCount = 0;
+      for (const leg of pair) {
+        const importKey = importKeyForTransaction(leg);
+        const wallet = walletsByType.get(leg.walletType);
+        const matching = await findExistingImportedTransaction(tx, userId, leg, wallet.id, importKey);
+        if (matching) existingCount += 1;
       }
-    }
-
-    const deltas = new Map();
-    let importedTransactions = 0;
-    let skippedTransactions = 0;
-    let importedLentRecords = 0;
-    let skippedLentRecords = 0;
-    const processedTransfers = new Set();
-    for (const entry of transactions) {
-      if (entry.transferId) {
-        if (processedTransfers.has(entry.transferId)) continue;
-        processedTransfers.add(entry.transferId);
-        const pair = transferGroups.get(entry.transferId);
-        let existingCount = 0;
-        for (const leg of pair) {
-          const key = crypto.createHash('sha256').update(JSON.stringify([
-            leg.walletType, leg.type, leg.amount, leg.category, leg.emoji, leg.note, leg.date
-          ])).digest('hex');
-          const matching = await tx.get(`SELECT id FROM transactions WHERE user_id = ? AND
-            (import_key = ? OR (wallet_id = ? AND type = ? AND amount = ? AND category = ? AND COALESCE(note, '') = ? AND transaction_date = ?)) LIMIT 1`,
-          [req.user.id, key, byType.get(leg.walletType).id, leg.type, centsToMoney(leg.amount), leg.category, leg.note, leg.date]);
-          if (matching) existingCount += 1;
-        }
-        if (existingCount === pair.length) {
-          skippedTransactions += pair.length;
-          continue;
-        }
-        if (existingCount > 0) fail(409, 'Only one side of this backup transfer already exists; nothing was imported.');
-        for (const leg of pair) {
-          const key = crypto.createHash('sha256').update(JSON.stringify([
-            leg.walletType, leg.type, leg.amount, leg.category, leg.emoji, leg.note, leg.date
-          ])).digest('hex');
-          const wallet = byType.get(leg.walletType);
-          deltas.set(wallet.id, (deltas.get(wallet.id) || 0) + adjustmentFor(leg.type, leg.amount));
-          await tx.run(`INSERT INTO transactions
-            (user_id, wallet_id, type, amount, category, category_emoji, note, transaction_date, import_key, transfer_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [req.user.id, wallet.id, leg.type, centsToMoney(leg.amount), leg.category, leg.emoji, leg.note, leg.date, key, leg.transferId]);
-          importedTransactions += 1;
-        }
+      if (existingCount === pair.length) {
+        skippedTransactions += pair.length;
         continue;
       }
-      const key = crypto.createHash('sha256').update(JSON.stringify([
-        entry.walletType, entry.type, entry.amount, entry.category, entry.emoji, entry.note, entry.date
-      ])).digest('hex');
-      const existing = await tx.get(`SELECT id FROM transactions WHERE user_id = ? AND
-        (import_key = ? OR (wallet_id = ? AND type = ? AND amount = ? AND category = ? AND COALESCE(note, '') = ? AND transaction_date = ?)) LIMIT 1`,
-      [req.user.id, key, byType.get(entry.walletType).id, entry.type, centsToMoney(entry.amount), entry.category, entry.note, entry.date]);
-      if (existing) { skippedTransactions += 1; continue; }
-      const wallet = byType.get(entry.walletType);
-      const current = deltas.get(wallet.id) || 0;
-      deltas.set(wallet.id, current + adjustmentFor(entry.type, entry.amount));
-      const inserted = await tx.run(`INSERT INTO transactions
-        (user_id, wallet_id, type, amount, category, category_emoji, note, transaction_date, import_key, transfer_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [req.user.id, wallet.id, entry.type, centsToMoney(entry.amount), entry.category, entry.emoji, entry.note, entry.date, key, entry.transferId]);
-      if (inserted.changes) importedTransactions += 1;
-    }
-    for (const entry of khata) {
-      const key = crypto.createHash('sha256').update(JSON.stringify([
-        entry.walletType, entry.friendName, entry.amount, entry.category, entry.note, entry.date
-      ])).digest('hex');
-      const existing = await tx.get(`SELECT id FROM khata_records WHERE user_id = ? AND
-        (import_key = ? OR (wallet_id = ? AND friend_name = ? AND original_amount = ? AND amount_repaid = 0 AND category = ? AND COALESCE(note, '') = ? AND lent_date = ?)) LIMIT 1`,
-      [req.user.id, key, byType.get(entry.walletType).id, entry.friendName, centsToMoney(entry.amount), entry.category, entry.note, entry.date]);
-      if (existing) { skippedLentRecords += 1; continue; }
-      const wallet = byType.get(entry.walletType);
-      deltas.set(wallet.id, (deltas.get(wallet.id) || 0) - entry.amount);
-      await tx.run(`INSERT INTO khata_records
-        (user_id, wallet_id, friend_name, original_amount, amount_repaid, category, category_emoji, note, lent_date, import_key)
-        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`, [req.user.id, wallet.id, entry.friendName, centsToMoney(entry.amount), entry.category, entry.emoji, entry.note, entry.date, key]);
-      importedLentRecords += 1;
-    }
-    if (restoreSnapshot) {
-      await applyWalletBalance(tx, req.user.id, byType.get('cash').id, cashSnapshot);
-      await applyWalletBalance(tx, req.user.id, byType.get('online').id, onlineSnapshot);
-    } else {
-      for (const [walletId, delta] of deltas) {
-        const wallet = wallets.find(item => item.id === walletId);
-        await applyWalletBalance(tx, req.user.id, walletId, storedMoneyToCents(wallet.balance) + delta);
+      if (existingCount > 0) fail(409, 'Only one side of this backup transfer already exists; nothing was imported.');
+      for (const leg of pair) {
+        const importKey = importKeyForTransaction(leg);
+        const wallet = walletsByType.get(leg.walletType);
+        deltas.set(wallet.id, (deltas.get(wallet.id) || 0) + adjustmentFor(leg.type, leg.amount));
+        await insertImportedTransaction(tx, userId, leg, wallet.id, importKey);
+        importedTransactions += 1;
       }
+      continue;
     }
-    return { importedTransactions, skippedTransactions, importedLentRecords, skippedLentRecords,
-      restoredWalletBalances: restoreSnapshot };
-  });
+
+    const importKey = importKeyForTransaction(entry);
+    const wallet = walletsByType.get(entry.walletType);
+    const existing = await findExistingImportedTransaction(tx, userId, entry, wallet.id, importKey);
+    if (existing) {
+      skippedTransactions += 1;
+      continue;
+    }
+    const current = deltas.get(wallet.id) || 0;
+    deltas.set(wallet.id, current + adjustmentFor(entry.type, entry.amount));
+    const inserted = await insertImportedTransaction(tx, userId, entry, wallet.id, importKey);
+    if (inserted.changes) importedTransactions += 1;
+  }
+  return { importedTransactions, skippedTransactions };
+}
+async function mergeImportedKhata(tx, userId, records, walletsByType, deltas) {
+  let importedLentRecords = 0;
+  let skippedLentRecords = 0;
+  for (const entry of records) {
+    const importKey = crypto.createHash('sha256').update(JSON.stringify([
+      entry.walletType, entry.friendName, entry.amount, entry.category, entry.note, entry.date
+    ])).digest('hex');
+    const wallet = walletsByType.get(entry.walletType);
+    const existing = await tx.get(`SELECT id FROM khata_records WHERE user_id = ? AND
+      (import_key = ? OR (wallet_id = ? AND friend_name = ? AND original_amount = ? AND amount_repaid = 0 AND category = ? AND COALESCE(note, '') = ? AND lent_date = ?)) LIMIT 1`,
+    [userId, importKey, wallet.id, entry.friendName, centsToMoney(entry.amount), entry.category, entry.note, entry.date]);
+    if (existing) {
+      skippedLentRecords += 1;
+      continue;
+    }
+    deltas.set(wallet.id, (deltas.get(wallet.id) || 0) - entry.amount);
+    await tx.run(`INSERT INTO khata_records
+      (user_id, wallet_id, friend_name, original_amount, amount_repaid, category, category_emoji, note, lent_date, import_key)
+      VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+    [userId, wallet.id, entry.friendName, centsToMoney(entry.amount), entry.category, entry.emoji, entry.note, entry.date, importKey]);
+    importedLentRecords += 1;
+  }
+  return { importedLentRecords, skippedLentRecords };
+}
+async function mergeImportedBackup(tx, userId, backup) {
+  const wallets = await tx.all('SELECT * FROM wallets WHERE user_id = ?', [userId]);
+  const walletsByType = new Map(wallets.map(wallet => [wallet.type, wallet]));
+  if (!walletsByType.has('cash') || !walletsByType.has('online')) fail(400, 'This account is missing a required wallet.');
+  const existingFinancialRows = await tx.get(`SELECT
+    (SELECT COUNT(*) FROM transactions WHERE user_id = ?) +
+    (SELECT COUNT(*) FROM khata_records WHERE user_id = ?) AS count`, [userId, userId]);
+  const restoreSnapshot = existingFinancialRows.count === 0 &&
+    wallets.every(wallet => storedMoneyToCents(wallet.balance) === 0);
+  for (const entry of [...backup.transactions, ...backup.khata]) {
+    if (entry.item.wallet_id === undefined) continue;
+    const referenced = wallets.find(wallet => wallet.id === Number(entry.item.wallet_id));
+    if (!referenced || referenced.type !== entry.walletType) {
+      fail(400, 'Backup contains a wallet reference that does not belong to this account.');
+    }
+  }
+  const deltas = new Map();
+  const transactionCounts = await mergeImportedTransactions(
+    tx, userId, backup.transactions, backup.transferGroups, walletsByType, deltas
+  );
+  const khataCounts = await mergeImportedKhata(tx, userId, backup.khata, walletsByType, deltas);
+  if (restoreSnapshot) {
+    await applyWalletBalance(tx, userId, walletsByType.get('cash').id, backup.cashSnapshot);
+    await applyWalletBalance(tx, userId, walletsByType.get('online').id, backup.onlineSnapshot);
+  } else {
+    for (const [walletId, delta] of deltas) {
+      const wallet = wallets.find(item => item.id === walletId);
+      await applyWalletBalance(tx, userId, walletId, storedMoneyToCents(wallet.balance) + delta);
+    }
+  }
+  return { ...transactionCounts, ...khataCounts, restoredWalletBalances: restoreSnapshot };
+}
+
+app.post('/api/import', authenticateToken, endpoint(async (req, res) => {
+  const body = requireBody(req);
+  const backup = validateImportPayload(body);
+  const result = await db.transaction(tx => mergeImportedBackup(tx, req.user.id, backup));
   res.json({ success: true, message: 'Backup merged. Existing matching records were skipped.', ...result });
 }, 'Unable to import this backup.'));
 
