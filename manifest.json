@@ -1,0 +1,25 @@
+{
+  "name": "Spendly – Daily Expense Tracker",
+  "short_name": "Spendly",
+  "description": "Smart, persona-based personal finance and daily expense tracker.",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='50' fill='%237c6aff'/><path d='M50 20v60M25 50h50' stroke='white' stroke-width='10' stroke-linecap='round'/></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='50' fill='%237c6aff'/><path d='M50 20v60M25 50h50' stroke='white' stroke-width='10' stroke-linecap='round'/></svg>",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["finance", "utilities", "productivity"]
+}

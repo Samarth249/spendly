@@ -870,9 +870,13 @@ app.use((error, req, res, next) => {
   return res.status(500).json({ success: false, error: 'The request could not be completed.' });
 });
 
-db.ready.then(() => {
-  app.listen(PORT, () => console.log(`[Spendly Backend] Server listening on port ${PORT}.`));
-}).catch(() => {
-  console.error('[Database] Initialization failed. Server was not started.');
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  db.ready.then(() => {
+    app.listen(PORT, () => console.log(`[Spendly Backend] Server listening on port ${PORT}.`));
+  }).catch(() => {
+    console.error('[Database] Initialization failed. Server was not started.');
+    process.exitCode = 1;
+  });
+}
+
+module.exports = app;

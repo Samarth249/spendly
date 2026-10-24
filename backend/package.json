@@ -4,14 +4,19 @@
   "description": "Backend API server for Spendly Expense Tracker",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
-  },
+  "start": "node server.js",
+  "dev": "node --watch server.js",
+  "test": "node --test",
+  "coverage": "c8 --reporter=text --reporter=lcov --reports-dir=coverage node --test"
+},
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
     "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "c8": "^12.0.0"
   }
 }

@@ -1,0 +1,6 @@
+backend/node_modules/
+backend/spendly.db
+.git
+.gitignore
+Jenkinsfile
+sonar-project.properties

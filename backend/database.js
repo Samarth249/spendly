@@ -1,7 +1,9 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
-const DB_PATH = path.resolve(__dirname, 'spendly.db');
+const DB_PATH = path.resolve(
+  process.env.SPENDLY_DB_PATH || path.join(__dirname, 'spendly.db')
+);
 const db = new sqlite3.Database(DB_PATH);
 
 function directRun(sql, params = []) {

@@ -4,3 +4,5 @@ backend/spendly.db
 /backend/spendly.db-wal
 .DS_Store
 Thumbs.db
+# Generated test coverage reports
+/backend/coverage/

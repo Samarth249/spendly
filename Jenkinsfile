@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -12,6 +13,21 @@ pipeline {
             steps {
                 checkout scm
             }
+        }
+
+        stage('Install Backend Dependencies') {
+            steps {
+                dir('backend') {
+                    bat 'npm ci'
+                }
+            }
+        }
+
+        stage('API Tests and Coverage') {
+    steps {
+        bat 'backend\\node_modules\\.bin\\c8.cmd --reporter=text --reporter=lcov --reports-dir=backend/coverage node --test .\\backend\\test\\api.test.js'
+    }
+}
         }
 
         stage('SonarQube Analysis') {

@@ -6,11 +6,14 @@
   <meta name="description" content="Daily Expense Tracker – A premium personal finance app to track spending by persona." />
   <meta name="theme-color" content="#0a0a0f" />
   <title>Spendly – Daily Expense Tracker</title>
+  <script src="theme.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="themes.css" />
+  <link rel="manifest" href="manifest.json" />
 </head>
 <body>
 
@@ -46,7 +49,7 @@
         </svg>
       </div>
       <div class="pin-app-name">Spendly</div>
-      <div class="pin-subtitle">Enter your PIN to continue</div>
+      <div class="pin-subtitle">Offline PIN opens local data only. Sign in for your account.</div>
     </div>
 
     <div class="pin-dots-area">
@@ -112,6 +115,9 @@
             <line x1="15" y1="9" x2="18" y2="12"/>
           </svg>
         </button>
+      </div>
+      <div style="text-align: center; margin-top: 18px;">
+        <a href="login.html" style="color: var(--accent-mid); font-size: 13px; text-decoration: none; font-weight: 500; opacity: 0.9;">Sign in with Account &rarr;</a>
       </div>
     </div>
   </div>
@@ -191,7 +197,7 @@
     <!-- Top Header -->
     <header class="top-header" role="banner">
       <div class="header-left">
-        <div class="header-greeting">Overview</div>
+        <div class="header-greeting">Dashboard</div>
         <div class="header-month" id="header-month-text">
           June <span>2026</span>
         </div>
@@ -204,12 +210,14 @@
           </svg>
           <div class="notif-badge"></div>
         </div>
-        <div class="header-avatar" id="avatar-btn" role="button" aria-label="Profile" tabindex="0" title="Your profile">S</div>
+        <div class="header-avatar" id="avatar-btn" role="button" aria-label="Profile" tabindex="0" title="Your profile">👤</div>
       </div>
     </header>
 
     <!-- Scrollable Body -->
     <div class="dashboard-body" id="dashboard-body">
+
+      <section class="app-page" id="page-dashboard" data-app-page="dashboard" aria-label="Dashboard">
 
       <!-- Persona pill -->
       <div class="persona-pill student" id="persona-display-pill">
@@ -220,7 +228,7 @@
       <div class="balance-hero" id="balance-hero-card">
         <div class="balance-hero-label">Total Balance</div>
         <div class="balance-hero-amount">
-          <span class="bhero-currency">₹</span><span id="total-balance-display">0</span>
+          <span class="bhero-currency">₹</span><span id="total-balance-display">0.00</span>
         </div>
         <div class="balance-hero-sub">Cash + Online Wallet combined</div>
 
@@ -236,7 +244,7 @@
               </button>
             </div>
             <div class="wcard-label">Cash Wallet</div>
-            <div class="wcard-amount">₹<span id="cash-balance-display">0</span></div>
+            <div class="wcard-amount">₹<span id="cash-balance-display">0.00</span></div>
           </div>
 
           <div class="wallet-card online">
@@ -249,7 +257,7 @@
               </button>
             </div>
             <div class="wcard-label">Online Wallet</div>
-            <div class="wcard-amount">₹<span id="online-balance-display">0</span></div>
+            <div class="wcard-amount">₹<span id="online-balance-display">0.00</span></div>
           </div>
         </div>
       </div>
@@ -286,28 +294,18 @@
         </div>
       </div>
 
-      <!-- Tab bar: Overview / Calendar / Settings -->
-      <div class="dashboard-tab-bar" role="tablist" aria-label="Dashboard views">
-        <button class="dash-tab active" id="tab-overview" role="tab" aria-selected="true">📊 Overview</button>
-        <button class="dash-tab" id="tab-calendar" role="tab" aria-selected="false">📅 Calendar</button>
-        <button class="dash-tab" id="tab-settings" role="tab" aria-selected="false">⚙️ Settings</button>
-      </div>
-
-      <!-- OVERVIEW SECTION -->
-      <div id="overview-section">
-
-        <!-- WHO OWES ME (Khata) -->
-        <div id="khata-section" style="margin-bottom:20px;display:none;">
-          <div class="section-header">
-            <div class="section-title">🤝 Who Owes Me</div>
-            <div class="section-action" id="khata-clear-btn" role="button" tabindex="0">Clear All</div>
-          </div>
-          <div id="khata-list"></div>
+      <div class="dashboard-shortcut" id="view-all-btn" role="button" tabindex="0" aria-label="Open transactions">
+        <div>
+          <div class="dashboard-shortcut-title">Transactions</div>
+          <div class="dashboard-shortcut-copy">Review your recent income and expenses</div>
         </div>
+        <span class="dashboard-shortcut-action">View all <span aria-hidden="true">→</span></span>
+      </div>
+      </section>
 
+      <section class="app-page" id="page-transactions" data-app-page="transactions" aria-label="Transactions" hidden>
         <div class="section-header">
-          <div class="section-title">Recent Transactions</div>
-          <div class="section-action" id="view-all-btn" role="button" tabindex="0">View All</div>
+          <div class="section-title">Transactions</div>
         </div>
 
         <div class="empty-state" id="transactions-empty" role="status" aria-label="No transactions yet">
@@ -323,10 +321,15 @@
         </div>
 
         <div id="txn-list"></div>
-      </div>
+      </section>
 
       <!-- CALENDAR SECTION -->
-      <div id="calendar-section">
+      <section class="app-page calendar-page" id="calendar-section" data-app-page="calendar" aria-label="Calendar" hidden>
+        <div class="app-page-heading">
+          <div class="app-page-title">Calendar</div>
+          <div class="app-page-description">Review activity by date</div>
+        </div>
+        <div class="calendar-panel">
         <div class="cal-header">
           <button class="cal-nav-btn" id="cal-prev" aria-label="Previous month">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -353,6 +356,7 @@
           Showing: <span id="cal-filter-date-text"></span>
           <button class="cal-clear-btn" id="cal-clear-btn" aria-label="Clear date filter">✕ Clear</button>
         </div>
+        </div>
 
         <!-- Filtered transaction list -->
         <div class="section-header" style="margin-top:4px">
@@ -366,10 +370,49 @@
           <div class="empty-subtitle">Nothing recorded for this date.</div>
         </div>
         <div id="cal-txn-list"></div>
-      </div>
+      </section>
+
+      <section class="app-page" id="page-khata" data-app-page="khata" aria-label="Khata" hidden>
+        <div class="app-page-heading">
+          <div class="app-page-title">Khata</div>
+          <div class="app-page-description">Track amounts lent and repayments</div>
+        </div>
+        <div id="khata-section" style="margin-bottom:20px;display:none;">
+          <div class="section-header">
+            <div class="section-title">🤝 Who Owes Me</div>
+            <div class="section-action" id="khata-clear-btn" role="button" tabindex="0">Clear All</div>
+          </div>
+          <div id="khata-list"></div>
+        </div>
+      </section>
 
       <!-- SETTINGS SECTION -->
-      <div id="settings-section">
+      <section class="app-page" id="settings-section" data-app-page="profile" aria-label="Profile and settings" hidden>
+        <div class="app-page-heading">
+          <div class="app-page-title">Profile</div>
+          <div class="app-page-description">Manage your appearance, data, and account</div>
+        </div>
+        <div class="settings-group">
+          <fieldset class="theme-setting" aria-describedby="theme-setting-help">
+            <legend class="settings-group-label">Appearance</legend>
+            <p class="theme-setting-help" id="theme-setting-help">Choose how Spendly looks on this device.</p>
+            <div class="theme-option-grid">
+              <label class="theme-option">
+                <input type="radio" name="spendly-theme" value="dark" />
+                <span class="theme-option-content"><span aria-hidden="true">🌙</span><span>Dark</span></span>
+              </label>
+              <label class="theme-option">
+                <input type="radio" name="spendly-theme" value="light" />
+                <span class="theme-option-content"><span aria-hidden="true">☀️</span><span>Light</span></span>
+              </label>
+              <label class="theme-option">
+                <input type="radio" name="spendly-theme" value="medium" />
+                <span class="theme-option-content"><span aria-hidden="true">◐</span><span>Medium</span></span>
+              </label>
+            </div>
+          </fieldset>
+        </div>
+
         <div class="settings-group">
           <div class="settings-group-label">Data Safety</div>
 
@@ -386,7 +429,7 @@
             <div class="settings-row-icon import">📥</div>
             <div class="settings-row-text">
               <div class="settings-row-title">Import Data</div>
-              <div class="settings-row-desc">Restore a previously exported JSON backup — replaces all data</div>
+              <div class="settings-row-desc">Merge a JSON backup — matching records are skipped; current records remain</div>
             </div>
             <div class="settings-row-arrow">›</div>
           </div>
@@ -408,6 +451,18 @@
         </div>
 
         <div class="settings-group">
+          <div class="settings-group-label">Account</div>
+          <div class="settings-row" id="btn-logout" style="cursor: pointer;">
+            <div class="settings-row-icon">🚪</div>
+            <div class="settings-row-text">
+              <div class="settings-row-title">Sign Out</div>
+              <div class="settings-row-desc">Log out of your server account and return to login</div>
+            </div>
+            <div class="settings-row-arrow">›</div>
+          </div>
+        </div>
+
+        <div class="settings-group">
           <div class="settings-group-label">Danger Zone</div>
           <div class="settings-row" id="btn-reset-all">
             <div class="settings-row-icon danger">⚠️</div>
@@ -419,12 +474,8 @@
           </div>
         </div>
 
-        <div class="settings-app-info">
-          <strong>Spendly</strong><br>
-          Phase 5 · Client-side · Data stored locally<br>
-          No internet required
-        </div>
-      </div>
+        <div class="settings-app-info"><strong>Spendly</strong><br>Account data syncs when signed in<br>Offline PIN mode uses local-only data</div>
+      </section>
 
     </div>
 
@@ -437,48 +488,47 @@
 
     <!-- Bottom Nav -->
     <nav class="bottom-nav" role="navigation" aria-label="Main navigation">
-      <div class="nav-item active" id="nav-home" role="button" tabindex="0" aria-label="Home" aria-current="page">
+      <button class="nav-item active" id="nav-dashboard" type="button" data-page="dashboard" aria-label="Dashboard" aria-current="page">
         <div class="nav-icon-wrap">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
             <polyline points="9 22 9 12 15 12 15 22"/>
           </svg>
         </div>
-        <span class="nav-label">Home</span>
-      </div>
+        <span class="nav-label">Dashboard</span>
+      </button>
 
-      <div class="nav-item" id="nav-analytics" role="button" tabindex="0" aria-label="Analytics">
+      <button class="nav-item" id="nav-transactions" type="button" data-page="transactions" aria-label="Transactions">
         <div class="nav-icon-wrap">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="20" x2="18" y2="10"/>
-            <line x1="12" y1="20" x2="12" y2="4"/>
-            <line x1="6" y1="20" x2="6" y2="14"/>
+            <rect x="4" y="3" width="16" height="18" rx="2"/>
+            <path d="M8 8h8M8 12h8M8 16h5"/>
           </svg>
         </div>
-        <span class="nav-label">Analytics</span>
-      </div>
+        <span class="nav-label">Transactions</span>
+      </button>
 
-      <div class="nav-fab" id="nav-add" role="button" tabindex="0" aria-label="Add transaction">
-        <div class="nav-fab-btn">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-            <line x1="12" y1="5" x2="12" y2="19"/>
-            <line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-        </div>
-        <span class="nav-fab-label">Add</span>
-      </div>
-
-      <div class="nav-item" id="nav-budget" role="button" tabindex="0" aria-label="Budget">
+      <button class="nav-item" id="nav-calendar" type="button" data-page="calendar" aria-label="Calendar">
         <div class="nav-icon-wrap">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="2" y="3" width="20" height="14" rx="2"/>
-            <path d="M8 21h8M12 17v4"/>
+            <rect x="3" y="4" width="18" height="17" rx="2"/>
+            <path d="M16 2v4M8 2v4M3 10h18"/>
           </svg>
         </div>
-        <span class="nav-label">Budget</span>
-      </div>
+        <span class="nav-label">Calendar</span>
+      </button>
 
-      <div class="nav-item" id="nav-profile" role="button" tabindex="0" aria-label="Profile">
+      <button class="nav-item" id="nav-khata" type="button" data-page="khata" aria-label="Khata">
+        <div class="nav-icon-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="9" cy="8" r="3"/>
+            <path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 5.5a3 3 0 0 1 0 5.8M17 14a5 5 0 0 1 3.5 4.5"/>
+          </svg>
+        </div>
+        <span class="nav-label">Khata</span>
+      </button>
+
+      <button class="nav-item" id="nav-profile" type="button" data-page="profile" aria-label="Profile">
         <div class="nav-icon-wrap">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
@@ -486,7 +536,7 @@
           </svg>
         </div>
         <span class="nav-label">Profile</span>
-      </div>
+      </button>
     </nav>
   </div>
 
@@ -514,7 +564,7 @@
       <div class="sheet-input-wrap" style="margin-bottom:0">
         <span class="sheet-currency-prefix">₹</span>
         <input type="number" id="exp-amount" class="form-input exp-amount-input"
-          placeholder="0" min="1" step="1" inputmode="decimal" autocomplete="off"
+          placeholder="0.00" min="0.01" step="0.01" inputmode="decimal" autocomplete="off"
           aria-label="Expense amount" />
       </div>
       <div class="balance-warning" id="balance-warning">⚠ Insufficient balance in selected wallet</div>
@@ -628,18 +678,18 @@
         id="balance-amount-input"
         class="sheet-input"
         placeholder="0"
-        min="1"
-        step="1"
+        min="0.01"
+        step="0.01"
         inputmode="decimal"
         aria-label="Amount to add"
       />
     </div>
 
     <div class="sheet-quick-amounts" id="quick-amounts" role="group" aria-label="Quick amount presets">
-      <div class="quick-amt" data-amount="500">+₹500</div>
-      <div class="quick-amt" data-amount="1000">+₹1K</div>
-      <div class="quick-amt" data-amount="2000">+₹2K</div>
-      <div class="quick-amt" data-amount="5000">+₹5K</div>
+      <div class="quick-amt" data-amount="500" role="button" tabindex="0">+₹500</div>
+      <div class="quick-amt" data-amount="1000" role="button" tabindex="0">+₹1K</div>
+      <div class="quick-amt" data-amount="2000" role="button" tabindex="0">+₹2K</div>
+      <div class="quick-amt" data-amount="5000" role="button" tabindex="0">+₹5K</div>
     </div>
 
     <button class="sheet-confirm-btn cash-confirm" id="sheet-confirm-btn" disabled aria-label="Confirm add balance">
@@ -648,9 +698,213 @@
   </div>
 </div>
 
+<!-- ════════════════════ TRANSFER MODAL ════════════════════ -->
+<div class="modal-overlay" id="transfer-modal" role="dialog" aria-modal="true" aria-label="Transfer Funds">
+  <div class="bottom-sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Transfer Funds</div>
+    <div class="sheet-subtitle">Move money between Cash and Online wallets</div>
+
+    <div class="transfer-toggle" role="group" aria-label="Transfer direction">
+      <button class="transfer-toggle-btn active" id="transfer-dir-c2o" type="button">
+        💵 Cash ➔ 💳 Online
+      </button>
+      <button class="transfer-toggle-btn" id="transfer-dir-o2c" type="button">
+        💳 Online ➔ 💵 Cash
+      </button>
+    </div>
+
+    <div class="sheet-input-wrap">
+      <span class="sheet-currency-prefix">₹</span>
+      <input
+        type="number"
+        id="transfer-amount-input"
+        class="sheet-input"
+        placeholder="0"
+        min="0.01"
+        step="0.01"
+        inputmode="decimal"
+        aria-label="Amount to transfer"
+      />
+    </div>
+
+    <div class="balance-warning" id="transfer-balance-warning" style="margin-bottom:12px;">⚠ Insufficient balance in source wallet</div>
+
+    <button class="sheet-confirm-btn online-confirm" id="transfer-confirm-btn" disabled aria-label="Confirm Transfer">
+      Transfer Money
+    </button>
+  </div>
+</div>
+
+<!-- ════════════════════ NOTIFICATIONS MODAL ════════════════════ -->
+<div class="modal-overlay" id="notif-modal" role="dialog" aria-modal="true" aria-label="Notifications">
+  <div class="bottom-sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Notifications</div>
+    <div class="sheet-subtitle">Activity & alerts</div>
+    <div id="notif-list-container">
+      <div class="notif-item">
+        <div class="notif-item-icon">🟢</div>
+        <div class="notif-item-content">
+          <div class="notif-item-title">Backend Connected</div>
+          <div class="notif-item-desc">Spendly is synchronized with your SQLite database.</div>
+        </div>
+      </div>
+      <div id="notif-dynamic-items"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ BUDGET MODAL ════════════════════ -->
+<div class="modal-overlay" id="budget-modal" role="dialog" aria-modal="true" aria-label="Budget Overview">
+  <div class="bottom-sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Budget Overview</div>
+    <div class="sheet-subtitle">Spending summary for this month</div>
+
+    <div class="budget-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:12px;color:var(--text-muted);font-weight:700;">TOTAL SPENT THIS MONTH</span>
+        <span id="budget-spent-val" style="font-size:16px;color:var(--danger);font-weight:800;">₹0.00</span>
+      </div>
+      <div class="budget-progress-bar">
+        <div class="budget-progress-fill" id="budget-progress-bar" style="width: 0%;"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--text-muted);">
+        <span>Available Total: <strong id="budget-avail-val" style="color:var(--text-primary)">₹0.00</strong></span>
+        <span id="budget-pct-label">0% spent</span>
+      </div>
+    </div>
+
+    <div class="section-title" style="margin-bottom:10px;">Top Categories</div>
+    <div id="budget-category-breakdown" style="display:flex;flex-direction:column;gap:8px;"></div>
+  </div>
+</div>
+
+<!-- ════════════════════ MORE OPTIONS MODAL ════════════════════ -->
+<div class="modal-overlay" id="more-modal" role="dialog" aria-modal="true" aria-label="More Options">
+  <div class="bottom-sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">More Actions</div>
+    <div class="sheet-subtitle">Quick shortcuts & features</div>
+
+    <div class="settings-row" id="more-action-transfer">
+      <div class="settings-row-icon export">🔄</div>
+      <div class="settings-row-text">
+        <div class="settings-row-title">Transfer Funds</div>
+        <div class="settings-row-desc">Move money between Cash & Online wallets</div>
+      </div>
+      <div class="settings-row-arrow">›</div>
+    </div>
+
+    <div class="settings-row" id="more-action-analytics">
+      <div class="settings-row-icon import">📅</div>
+      <div class="settings-row-text">
+        <div class="settings-row-title">Calendar & Timeline</div>
+        <div class="settings-row-desc">Inspect day-by-day spending and history</div>
+      </div>
+      <div class="settings-row-arrow">›</div>
+    </div>
+
+    <div class="settings-row" id="more-action-budget">
+      <div class="settings-row-icon export">📊</div>
+      <div class="settings-row-text">
+        <div class="settings-row-title">Monthly Budget</div>
+        <div class="settings-row-desc">View monthly breakdown & category stats</div>
+      </div>
+      <div class="settings-row-arrow">›</div>
+    </div>
+
+    <div class="settings-row" id="more-action-settings">
+      <div class="settings-row-icon danger">⚙️</div>
+      <div class="settings-row-text">
+        <div class="settings-row-title">Settings & Backup</div>
+        <div class="settings-row-desc">Export, import, clear Khata, or sign out</div>
+      </div>
+      <div class="settings-row-arrow">›</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════ KHATA REPAY MODAL ════════════════════ -->
+<div class="modal-overlay" id="repay-modal" role="dialog" aria-modal="true" aria-label="Record Khata Repayment">
+  <div class="bottom-sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Record Repayment</div>
+    <div class="sheet-subtitle" id="repay-subtitle">Settlement for borrowed funds</div>
+
+    <div style="background:var(--gold-soft);border:1px solid var(--gold-border);border-radius:var(--radius-md);padding:12px;margin-bottom:16px;">
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Friend: <strong id="repay-friend-name" style="color:var(--text-primary)">—</strong></div>
+      <div style="font-size:12px;color:var(--text-muted);">Outstanding: <strong id="repay-outstanding-amt" style="color:var(--gold)">₹0.00</strong></div>
+    </div>
+
+    <div class="sheet-input-wrap">
+      <span class="sheet-currency-prefix">₹</span>
+      <input
+        type="number"
+        id="repay-amount-input"
+        class="sheet-input"
+        placeholder="0"
+        min="0.01"
+        step="0.01"
+        inputmode="decimal"
+        aria-label="Repayment amount"
+      />
+    </div>
+
+    <div class="form-field" style="margin-bottom:18px;">
+      <div class="field-label">Deposit Repayment Into</div>
+      <div class="wallet-toggle" role="group" aria-label="Deposit wallet selection">
+        <button class="wallet-toggle-btn active-cash" id="repay-wallet-cash" type="button">
+          💵 Cash Wallet
+        </button>
+        <button class="wallet-toggle-btn" id="repay-wallet-online" type="button">
+          💳 Online Wallet
+        </button>
+      </div>
+    </div>
+
+    <button class="sheet-confirm-btn cash-confirm" id="repay-confirm-btn" disabled aria-label="Confirm Repayment">
+      Confirm Repayment
+    </button>
+  </div>
+</div>
+
+<!-- Deferred expense settlement modal -->
+<div class="modal-overlay" id="deferred-pay-modal" role="dialog" aria-modal="true" aria-labelledby="deferred-pay-heading" aria-describedby="deferred-pay-summary">
+  <div class="bottom-sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title" id="deferred-pay-heading">Pay deferred expense</div>
+    <div class="sheet-subtitle" id="deferred-pay-category">Choose the wallet for this payment</div>
+
+    <div class="deferred-pay-summary" id="deferred-pay-summary" aria-live="polite">
+      <div><span>Original deferred amount</span><strong id="deferred-pay-original">₹0.00</strong></div>
+      <div><span>Outstanding</span><strong id="deferred-pay-outstanding">₹0.00</strong></div>
+    </div>
+
+    <div class="form-field" style="margin-bottom:18px;">
+      <div class="field-label">Pay from</div>
+      <div class="wallet-toggle" role="group" aria-label="Select wallet to pay deferred expense">
+        <button class="wallet-toggle-btn active-cash" id="deferred-wallet-cash" type="button" aria-pressed="true">Cash Wallet</button>
+        <button class="wallet-toggle-btn" id="deferred-wallet-online" type="button" aria-pressed="false">Online Wallet</button>
+      </div>
+    </div>
+    <div class="deferred-pay-hint" id="deferred-pay-hint" aria-live="polite"></div>
+    <button class="sheet-confirm-btn cash-confirm" id="deferred-pay-confirm" type="button">Pay outstanding amount</button>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="app-toast" role="status" aria-live="polite"></div>
 
+
 <script src="app.js" defer></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW registration error:', err));
+    });
+  }
+</script>
 </body>
 </html>
