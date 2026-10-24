@@ -260,7 +260,7 @@ Create a folder named `screenshots` in the repository and save your actual scree
 
 **GitHub Repository**
 
-![GitHub Repository](screenshots/github-repository.png)
+<img width="1920" height="1080" alt="Screenshot (529)" src="https://github.com/user-attachments/assets/74ef91a8-3076-4eb0-8e2e-58d747488de1" />
 
 *Figure 10: GitHub repository containing the Spendly source code.*
 
