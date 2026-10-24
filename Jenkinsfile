@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -24,10 +23,9 @@ pipeline {
         }
 
         stage('API Tests and Coverage') {
-    steps {
-        bat 'backend\\node_modules\\.bin\\c8.cmd --reporter=text --reporter=lcov --reports-dir=backend/coverage node --test .\\backend\\test\\api.test.js'
-    }
-}
+            steps {
+                bat 'backend\\node_modules\\.bin\\c8.cmd --reporter=text --reporter=lcov --reports-dir=backend/coverage node --test .\\backend\\test\\api.test.js'
+            }
         }
 
         stage('SonarQube Analysis') {
