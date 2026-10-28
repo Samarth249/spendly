@@ -286,7 +286,7 @@ Create a folder named `screenshots` in the repository and save your actual scree
 
 **Jenkins Build Result**
 
-![Uploading Screenshot 2026-10-24 175701.png…]()
+<img width="1917" height="973" alt="image" src="https://github.com/user-attachments/assets/4be179e4-841e-4511-b7b1-180b08f9cd4e" />
 
 
 *Figure 14: Jenkins build execution and actual result.*
